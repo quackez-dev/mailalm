@@ -12,6 +12,11 @@ use crate::sample::{self, Group, Message};
 use crate::theme as t;
 use crate::window;
 
+/// Starting widths of the folder pane and the message list. The splitters between the three
+/// columns change them; the reading pane takes what is left.
+const FOLDERS_WIDTH: f32 = 264.0;
+const MESSAGES_WIDTH: f32 = 400.0;
+
 pub struct MailApp {
     ws: Workspace,
     messages: Vec<Message>,
@@ -405,9 +410,11 @@ fn folder_row(ui: &mut Ui, indent: f32, selected: bool, label: &str, count: usiz
 
 impl MailApp {
     fn folder_pane(&mut self, ui: &mut Ui) {
+        // Resizable: the line on its right edge is a splitter.
         egui::Panel::left("folders")
-            .exact_size(264.0)
-            .resizable(false)
+            .resizable(true)
+            .default_size(FOLDERS_WIDTH)
+            .size_range(200.0..=420.0)
             .frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(8, 8)))
             .show(ui, |ui| {
                 egui::Panel::bottom("modules").resizable(false).frame(Frame::new().inner_margin(Margin::symmetric(0, 6))).show(ui, |ui| {
@@ -487,9 +494,11 @@ impl MailApp {
             None => ("Unified inbox".to_owned(), format!("{} accounts", self.ws.accounts().len()), t::ACCENT),
         };
         let mark_accounts = self.ws.unified_available();
+        // Resizable: the line between the list and the reading pane is a splitter.
         egui::Panel::left("messages")
-            .exact_size(400.0)
-            .resizable(false)
+            .resizable(true)
+            .default_size(MESSAGES_WIDTH)
+            .size_range(300.0..=720.0)
             .frame(Frame::new().fill(t::PANEL2))
             .show(ui, |ui| {
                 Frame::new().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
