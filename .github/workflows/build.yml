@@ -1,0 +1,106 @@
+# MailALM: tests and build on GitHub Actions (nothing is compiled on the developer's PC).
+#
+# - Code: this repository (quackez-dev/mailalm), branch main.
+# - Git dependencies (egui and winit, storytold's forks): the private quackez-dev mirrors, at the
+#   audited commits of Cargo.lock. Every github.com/storytold/ URL is rewritten to
+#   github.com/quackez-dev/, so nothing is fetched from storytold.
+# - crates.io: Cargo.lock checksums (`--locked`).
+# - Actions: only GitHub's own, pinned by commit SHA. The only secret is MIRRORS_TOKEN (read-only on
+#   the mirrors), removed before any build script runs. Tests and build run offline.
+# - Windows only for now (PLAN.md, decision Q2).
+# - A push to main runs the tests and the release build. A `crafttools-v*` tag or a manual run also
+#   packages the portable zip with its SHA256SUMS as a one-day artifact: this repository is public,
+#   so it is fetched to the PC and deleted right after the build. No release, no write token.
+name: MailALM build
+
+on:
+  push:
+    branches: [main]
+    tags: ['crafttools-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: 1.98.0
+  CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+  GIT_LFS_SKIP_SMUDGE: '1'
+  CARGO_TERM_COLOR: never
+
+jobs:
+  windows:
+    name: build (windows)
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out MailALM
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          lfs: false
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+
+      - name: Fetch dependencies from the mirrors
+        env:
+          MIRRORS_TOKEN: ${{ secrets.MIRRORS_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MIRRORS_TOKEN" ]; then echo "::error::the MIRRORS_TOKEN secret is not set"; exit 1; fi
+          # No credential helper may keep the token (Git Credential Manager on Windows runners).
+          git config --global credential.helper ""
+          section="url.https://x-access-token:${MIRRORS_TOKEN}@github.com/quackez-dev/"
+          trap 'git config --global --remove-section "$section" || true' EXIT
+          git config --global "$section.insteadOf" "https://github.com/storytold/"
+          cargo fetch --locked
+
+      - name: Check that the token is gone
+        run: |
+          if git config --global --get-regexp '^url\.' || grep -rqs "x-access-token" ~/.cargo/git/db/*/config; then
+            echo "::error::the mirrors token is still configured"; exit 1
+          fi
+
+      - name: Test (offline)
+        run: cargo test --locked --offline --workspace
+
+      - name: Build (offline)
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --locked --offline -p mailalm --target x86_64-pc-windows-msvc
+
+      - name: Package (portable zip, unsigned)
+        if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $name = "mailalm-$($env:GITHUB_REF_NAME -replace '[^A-Za-z0-9._-]', '-')-$($env:GITHUB_SHA.Substring(0, 8))-windows-x64"
+          New-Item -ItemType Directory -Force dist, "stage\$name" | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\mailalm.exe "stage\$name\"
+          Compress-Archive -Path "stage\$name" -DestinationPath "dist\$name.zip"
+
+      - name: Checksums
+        if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS-Windows.txt
+          cat SHA256SUMS-Windows.txt
+
+      - name: Upload
+        if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mailalm-windows
+          path: dist/*
+          if-no-files-found: error
+          # Fetched to the PC right after the build, then deleted; never a release.
+          retention-days: 1
