@@ -36,3 +36,9 @@ MailALM is built and tested on GitHub Actions only ([build.yml](.github/workflow
 A manual run or a `crafttools-v*` tag produces an unsigned portable zip with its SHA-256 sums.
 
 Run the sample with a single account: `mailalm --one-account`.
+
+## License
+
+MailALM is dual-licensed under the [MIT license](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at
+your option. Code taken from other MIT or Apache-2.0 projects keeps its origin and notices, listed in
+`ATTRIBUTION.md` once there is any.
