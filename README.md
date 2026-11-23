@@ -3,8 +3,9 @@
 A mail and calendar client for Windows, written in Rust with egui: Outlook.com/Hotmail, Gmail and
 classic IMAP accounts side by side, each kept clearly apart.
 
-**Status: phase 1.** The window and its layout over a sample mailbox. No account can be connected
-yet and the app makes no network connection.
+**Status: phase 2.** IMAP accounts (Vidéotron, Bell and others): reading, sending in plain text,
+folders, moving, flags, a local cache, search in the cache, and changes made while offline. Outlook
+and Gmail come in phases 3 and 4; attachments can be listed but not opened yet (phase 5).
 
 ## Principles
 
@@ -22,8 +23,17 @@ The full plan, in French: [PLAN.md](PLAN.md). Ideas kept for later: [IDEES.md](I
 
 ```
 apps/mailalm/     the desktop app (egui)
-crates/model/     accounts, providers and the workspace rules (pure Rust, tested)
+crates/model/     accounts, servers, folders, summaries, search queries, workspace rules (pure, tested)
+crates/mime/      reading messages and writing outgoing mail (mail-parser, mail-builder, html2text)
+crates/net/       IMAP, TLS and SMTP, adapted from MailCraft (see ATTRIBUTION.md)
+crates/store/     the local cache, one folder per account
+crates/engine/    one worker thread per account: cache first, then the server; offline changes
+docs/             the domains MailALM contacts
 ```
+
+Passwords are kept in the Windows Credential Manager, never in a file. The settings are in
+`%APPDATA%\MailALM`, the cache in `%LOCALAPPDATA%\MailALM\cache` (not encrypted: BitLocker and the
+Windows session protect it).
 
 ## Building
 
@@ -35,10 +45,8 @@ MailALM is built and tested on GitHub Actions only ([build.yml](.github/workflow
 
 A manual run or a `crafttools-v*` tag produces an unsigned portable zip with its SHA-256 sums.
 
-Run the sample with a single account: `mailalm --one-account`.
-
 ## License
 
 MailALM is dual-licensed under the [MIT license](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at
 your option. Code taken from other MIT or Apache-2.0 projects keeps its origin and notices, listed in
-`ATTRIBUTION.md` once there is any.
+[ATTRIBUTION.md](ATTRIBUTION.md).

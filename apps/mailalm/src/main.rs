@@ -1,18 +1,20 @@
 //! MailALM desktop app.
 //!
-//! Phase 1: the window and its layout, drawn from the validated mockups, over a sample mailbox.
-//! No account is connected and nothing touches the network.
+//! Phase 2: IMAP accounts (Vidéotron, Bell, others): reading, sending, folders, the local cache,
+//! search in the cache, and changes made offline.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod accounts;
+mod compose;
 mod icons;
-mod sample;
+mod mailbox;
+mod settings;
 mod theme;
+mod time;
 mod ui;
 mod window;
 
 fn main() -> eframe::Result {
-    // `--one-account`: the sample mailbox with a single account (no unified view).
-    let one_account = std::env::args().skip(1).any(|a| a == "--one-account");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("MailALM")
@@ -26,9 +28,9 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "MailALM",
         options,
-        Box::new(move |cc| {
+        Box::new(|cc| {
             theme::apply(&cc.egui_ctx);
-            Ok(Box::new(ui::MailApp::new(sample::workspace(one_account), sample::messages())))
+            Ok(Box::new(ui::MailApp::new(&cc.egui_ctx)))
         }),
     )
 }

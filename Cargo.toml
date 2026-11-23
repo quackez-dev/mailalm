@@ -11,6 +11,35 @@ publish = false
 
 [workspace.dependencies]
 mailalm-model = { path = "crates/model" }
+mailalm-mime = { path = "crates/mime" }
+mailalm-net = { path = "crates/net" }
+mailalm-store = { path = "crates/store" }
+mailalm-engine = { path = "crates/engine" }
+
+# Every crate below is at the version, and with the features, MailCraft v0.41.0 uses: audited there
+# (audits/mailcraft), and the Cargo.lock is checked against that one (audits/mailalm/README.md).
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+thiserror = "2"
+# Mail: parsing (mail-parser), writing (mail-builder), HTML to text (html2text).
+mail-parser = { version = "1.0.1", features = ["full_encoding"] }
+mail-builder = { version = "2", default-features = false }
+html2text = { version = "0.17", features = ["css"] }
+# Network: IMAP responses (imap-proto), SMTP (lettre), TLS (rustls with ring).
+imap-proto = "0.17"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls", "ring", "webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "1"
+rustls-native-certs = "0.8"
+schannel = "0.1"
+# Passwords in the system's keychain (Credential Manager on Windows).
+keyring = "4.2"
+# The user's data folders (%APPDATA%, %LOCALAPPDATA%).
+dirs = "7"
+# Local times: the system's zone name and its rules.
+chrono = { version = "0.4", default-features = false }
+chrono-tz = { version = "0.10", default-features = false }
+iana-time-zone = "0.1"
 
 # UI: egui 0.37 and winit 0.30 as the Craft apps build them (storytold's forks, see [patch] below).
 egui = "0.37"

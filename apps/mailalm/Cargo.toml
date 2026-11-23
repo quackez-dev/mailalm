@@ -12,7 +12,17 @@ workspace = true
 
 [dependencies]
 mailalm-model = { workspace = true }
-# The symbol fonts (▾, ✓…) egui had by default before 0.37.
+mailalm-mime = { workspace = true }
+mailalm-store = { workspace = true }
+mailalm-engine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+# Dates in the computer's time zone: its IANA name (iana-time-zone) and the zone's rules (chrono-tz).
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+iana-time-zone = { workspace = true }
+# The symbol fonts (📎, ⚑…) egui had by default before 0.37. Neither has ▾ or ✓: those are painted (icons.rs).
 egui = { workspace = true, features = ["monochrome_emoji_fonts"] }
 # Without default features, so each one is named. No persistence, no system fonts, no links.
 eframe = { workspace = true, features = ["accesskit", "clipboard", "default_fonts", "wgpu", "wayland", "x11"] }
