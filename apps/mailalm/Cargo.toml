@@ -17,3 +17,8 @@ egui = { workspace = true, features = ["monochrome_emoji_fonts"] }
 # Without default features, so each one is named. No persistence, no system fonts, no links.
 eframe = { workspace = true, features = ["accesskit", "clipboard", "default_fonts", "wgpu", "wayland", "x11"] }
 log = { workspace = true }
+
+[build-dependencies]
+# Icon, VERSIONINFO and manifest in mailalm.exe (build.rs, Windows only). It runs the Windows SDK's
+# resource compiler (rc.exe) and nothing else. The version MailCraft v0.41.0 uses, audited there.
+winresource = "0.1"

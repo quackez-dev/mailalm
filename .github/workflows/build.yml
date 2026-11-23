@@ -31,6 +31,8 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
   GIT_LFS_SKIP_SMUDGE: '1'
   CARGO_TERM_COLOR: never
+  # The icon, version information and manifest must be in mailalm.exe (apps/mailalm/build.rs).
+  MAILALM_REQUIRE_WINRES: '1'
 
 jobs:
   windows:
