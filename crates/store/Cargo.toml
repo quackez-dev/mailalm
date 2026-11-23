@@ -1,0 +1,16 @@
+[package]
+name = "mailalm-store"
+description = "MailALM local cache: each account's folders, message summaries, messages and offline changes, on disk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mailalm-model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
