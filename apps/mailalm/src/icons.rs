@@ -1,11 +1,15 @@
 //! Small line icons, drawn with the painter (no image or icon font to embed).
+//!
+//! Symbols in text need a font that has them. egui's fonts have neither ▾ (U+25BE) nor ✓ (U+2713):
+//! they show as empty boxes. Such symbols are drawn here instead.
 
-use egui::{Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2, vec2};
+use egui::{Atom, Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2, vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
     ChevronDown,
     ChevronRight,
+    Check,
     Minimize,
     Maximize,
     Close,
@@ -30,6 +34,10 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::ChevronRight => {
             line(c + vec2(-2.0, -4.0), c + vec2(2.0, 0.0));
             line(c + vec2(2.0, 0.0), c + vec2(-2.0, 4.0));
+        }
+        Icon::Check => {
+            line(c + vec2(-4.0, 0.0), c + vec2(-1.0, 3.0));
+            line(c + vec2(-1.0, 3.0), c + vec2(4.0, -3.0));
         }
         Icon::Minimize => line(c + vec2(-5.0, 0.0), c + vec2(5.0, 0.0)),
         Icon::Maximize => {
@@ -75,6 +83,12 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             line(c + vec2(0.0, -5.0), c + vec2(0.0, 5.0));
         }
     }
+}
+
+/// The icon as a piece of a widget's label, e.g. `ui.menu_button(("Move", icons::atom(Icon::ChevronDown)), …)`.
+/// It takes the label's text colour.
+pub fn atom(icon: Icon) -> Atom<'static> {
+    Atom::paint(Vec2::splat(10.0), move |ui, args| paint(ui.painter(), args.rect, icon, args.fallback_text_color))
 }
 
 /// A flat icon button with a tooltip. `hover_fill` is drawn under the icon on hover.

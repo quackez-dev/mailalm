@@ -208,7 +208,7 @@ impl MailApp {
                         }
                     }
                     let mut junk: Option<&str> = None;
-                    let _ = ui.menu_button("Junk ▾", |ui| {
+                    let _ = ui.menu_button(("Junk", icons::atom(Icon::ChevronDown)), |ui| {
                         for item in ["Report junk", "Block sender", "Unsubscribe", "Not junk"] {
                             if ui.button(item).clicked() {
                                 junk = Some(item);
@@ -222,8 +222,8 @@ impl MailApp {
                         self.say(format!("{item}: arrives with real accounts (phases 3 and 4)."));
                     }
                     separator(ui);
-                    for label in ["Move ▾", "Snooze ▾", "Flag ▾", "More ▾"] {
-                        let _ = ui.menu_button(label, |ui| {
+                    for label in ["Move", "Snooze", "Flag", "More"] {
+                        let _ = ui.menu_button((label, icons::atom(Icon::ChevronDown)), |ui| {
                             ui.label(RichText::new("Arrives with real accounts.").color(t::FAINT));
                         });
                     }
@@ -326,7 +326,7 @@ impl MailApp {
                         ui.add_space(4.0);
                         for (id, name, address, dot) in &accounts {
                             let current = focused == Some(*id);
-                            let right = if current { "current ✓" } else { "" };
+                            let right = if current { "current" } else { "" };
                             if menu_row(ui, Some(*dot), name, address, right, current).clicked() {
                                 chosen = Some(format!("New mail from {name}: the compose window arrives in phase 7."));
                             }
@@ -360,7 +360,8 @@ impl MailApp {
     }
 }
 
-/// One line of a menu: an optional colour dot, a label, a detail in grey, and a note on the right.
+/// One line of a menu: an optional colour dot, a label, a detail in grey, and a note on the right,
+/// followed by a check mark on the current line.
 fn menu_row(ui: &mut Ui, dot: Option<Color32>, label: &str, detail: &str, right: &str, current: bool) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
     let p = ui.painter_at(rect);
@@ -378,8 +379,13 @@ fn menu_row(ui: &mut Ui, dot: Option<Color32>, label: &str, detail: &str, right:
     if !detail.is_empty() {
         p.text(pos2(label_rect.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, detail, FontId::proportional(12.0), t::FAINT);
     }
+    let mut right_edge = rect.right() - 10.0;
+    if current {
+        icons::paint(&p, Rect::from_center_size(pos2(right_edge - 5.0, rect.center().y), Vec2::splat(10.0)), Icon::Check, t::ACCENT_TEXT);
+        right_edge -= 16.0;
+    }
     if !right.is_empty() {
-        p.text(pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, right, FontId::proportional(11.5), t::ACCENT_TEXT);
+        p.text(pos2(right_edge, rect.center().y), Align2::RIGHT_CENTER, right, FontId::proportional(11.5), t::ACCENT_TEXT);
     }
     response
 }
