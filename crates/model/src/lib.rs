@@ -1,6 +1,7 @@
 //! MailALM data model: accounts, providers and the rules of the workspace.
 //!
-//! Pure Rust, no I/O, no dependency: the desktop app, the MCP server and the tests share it.
+//! Pure Rust, no I/O (serde only): the desktop app, the network layer, the cache, the MCP server and
+//! the tests share it.
 //!
 //! The workspace rules (PLAN.md, section 4.3):
 //! - the account that has the focus is expanded, every other one is collapsed;
@@ -9,12 +10,20 @@
 //! - the unified view exists only when more than one account is configured;
 //! - a search covers the focused account by default, every account in the unified view.
 
-/// An account's identity in the workspace. Stable while the app runs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub mod mail;
+pub mod query;
+
+pub use mail::{Change, Flags, Folder, FolderRole, Person, Security, Server, Summary, sort_folders};
+pub use query::Query;
+
+use serde::{Deserialize, Serialize};
+
+/// An account's identity: stable, kept in the settings, and the name of its cache folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AccountId(pub u32);
 
 /// Built-in server settings for classic IMAP providers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImapPreset {
     Videotron,
     Bell,
@@ -22,8 +31,39 @@ pub enum ImapPreset {
     Custom,
 }
 
+impl ImapPreset {
+    /// The preset's IMAP and SMTP servers; `None` for settings typed by the user. They are shown,
+    /// and can be changed, before the account is added.
+    ///
+    /// To be confirmed with each provider's current help pages (PLAN.md, section 4.1): Vidéotron
+    /// and Bell have both changed their outgoing servers over the years.
+    pub fn servers(self) -> Option<(Server, Server)> {
+        match self {
+            ImapPreset::Videotron => Some((
+                Server::new("imap.videotron.ca", 993, Security::Tls),
+                Server::new("smtp.videotron.ca", 465, Security::Tls),
+            )),
+            ImapPreset::Bell => Some((
+                Server::new("imap.bell.net", 993, Security::Tls),
+                Server::new("smtphm.sympatico.ca", 587, Security::StartTls),
+            )),
+            ImapPreset::Custom => None,
+        }
+    }
+
+    /// The preset an address's domain calls for.
+    pub fn for_address(address: &str) -> Self {
+        let domain = address.rsplit('@').next().unwrap_or("").to_ascii_lowercase();
+        match domain.as_str() {
+            "videotron.ca" => ImapPreset::Videotron,
+            "bell.net" | "sympatico.ca" => ImapPreset::Bell,
+            _ => ImapPreset::Custom,
+        }
+    }
+}
+
 /// Who hosts the account, which decides what the server can do for it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Provider {
     /// Hotmail, Outlook.com, Live: Microsoft Graph.
     Outlook,
@@ -69,11 +109,11 @@ impl Provider {
 }
 
 /// An sRGB colour, the account's mark everywhere in the interface.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rgb(pub u8, pub u8, pub u8);
 
-/// One configured account.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One configured account. Its password is never here: it is in the system's keychain.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub id: AccountId,
     /// Short name chosen by the user ("Outlook", "Work"…).
@@ -81,6 +121,36 @@ pub struct Account {
     pub address: String,
     pub provider: Provider,
     pub color: Rgb,
+    /// The name the servers know the account by (usually the address).
+    #[serde(default)]
+    pub username: String,
+    /// IMAP and SMTP servers, for an IMAP account.
+    #[serde(default)]
+    pub imap: Option<Server>,
+    #[serde(default)]
+    pub smtp: Option<Server>,
+}
+
+impl Account {
+    /// The name to sign in with: the username, or the address when it is empty.
+    pub fn login(&self) -> &str {
+        if self.username.trim().is_empty() { &self.address } else { &self.username }
+    }
+}
+
+/// A colour for the n-th account added, from a palette that reads on the dark theme.
+pub fn account_color(n: usize) -> Rgb {
+    const PALETTE: [Rgb; 8] = [
+        Rgb(0x5b, 0x9b, 0xff),
+        Rgb(0xf2, 0x91, 0x4f),
+        Rgb(0xb8, 0x93, 0xff),
+        Rgb(0xe3, 0xb5, 0x3f),
+        Rgb(0x4f, 0xc9, 0x8c),
+        Rgb(0xff, 0x6f, 0x91),
+        Rgb(0x4f, 0xc3, 0xd9),
+        Rgb(0xc9, 0xd1, 0x5b),
+    ];
+    PALETTE[n % PALETTE.len()]
 }
 
 /// What has the focus in the folder pane.
@@ -224,6 +294,9 @@ mod tests {
             address: format!("user{id}@example.com"),
             provider,
             color: Rgb(0, 0, 0),
+            username: String::new(),
+            imap: None,
+            smtp: None,
         }
     }
 
@@ -334,5 +407,23 @@ mod tests {
         assert!(!Provider::Imap(ImapPreset::Bell).blocks_on_server());
         assert!(Provider::Gmail.creates_meet() && !Provider::Outlook.creates_meet());
         assert!(Provider::Outlook.creates_teams() && !Provider::Gmail.creates_teams());
+    }
+
+    #[test]
+    fn presets_follow_the_address() {
+        assert_eq!(ImapPreset::for_address("a@VIDEOTRON.ca"), ImapPreset::Videotron);
+        assert_eq!(ImapPreset::for_address("a@bell.net"), ImapPreset::Bell);
+        assert_eq!(ImapPreset::for_address("a@example.com"), ImapPreset::Custom);
+        let (imap, smtp) = ImapPreset::Bell.servers().unwrap_or_else(|| (Server::new("", 0, Security::Tls), Server::new("", 0, Security::Tls)));
+        assert!(imap.host_is_valid() && smtp.host_is_valid());
+        assert!(ImapPreset::Custom.servers().is_none());
+    }
+
+    #[test]
+    fn the_login_is_the_address_by_default() {
+        let mut a = account(1, Provider::Imap(ImapPreset::Bell));
+        assert_eq!(a.login(), "user1@example.com");
+        a.username = "alex".into();
+        assert_eq!(a.login(), "alex");
     }
 }

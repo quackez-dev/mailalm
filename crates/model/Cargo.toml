@@ -1,6 +1,6 @@
 [package]
 name = "mailalm-model"
-description = "MailALM data model: accounts, providers and the workspace rules (pure, no I/O)"
+description = "MailALM data model: accounts, servers, folders, message summaries, search queries, workspace rules (pure, no I/O)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,3 +11,4 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+serde = { workspace = true }
