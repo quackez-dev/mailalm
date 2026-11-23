@@ -1,0 +1,19 @@
+[package]
+name = "mailalm-engine"
+description = "MailALM engine: one worker per account (cache first, then the server), offline changes, sending, search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mailalm-model = { workspace = true }
+mailalm-mime = { workspace = true }
+mailalm-net = { workspace = true }
+mailalm-store = { workspace = true }
+keyring = { workspace = true }
+log = { workspace = true }
