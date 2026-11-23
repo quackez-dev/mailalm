@@ -1,0 +1,28 @@
+[package]
+name = "mailalm-net"
+description = "MailALM network layer: blocking IMAP client and SMTP submission, always over verified TLS (adapted from MailCraft)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mailalm-model = { workspace = true }
+# IMAP responses are parsed by imap-proto; framing and size caps are ours (src/imap/conn.rs).
+imap-proto = { workspace = true }
+# SMTP submission.
+lettre = { workspace = true }
+# TLS: rustls with ring, Mozilla's roots and the system's.
+rustls = { workspace = true }
+webpki-roots = { workspace = true }
+rustls-native-certs = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# The certificates Windows distrusts (`Disallowed`), refused even when among the roots.
+schannel = { workspace = true }

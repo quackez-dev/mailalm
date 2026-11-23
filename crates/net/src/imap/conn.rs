@@ -1,0 +1,434 @@
+// Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/protocols/imap/conn.rs. MIT OR Apache-2.0.
+// Changed: size caps fail with `TooLarge`, NO and BAD with `Server`; no IDLE wait; an unparsed response is logged by its length only; server text in errors is clipped.
+
+//! Response framing and the command loop: a response is one line plus any `{n}` literals it
+//! announces, taken off the buffer only once complete. Server input is hostile: a line, a
+//! literal and the whole of one command's responses are capped, and a command has an overall
+//! deadline.
+
+use std::io::{Read, Write};
+use std::time::{Duration, Instant};
+
+use imap_proto::{Response, Status};
+
+use super::{MAX_LITERAL, Part, info};
+use crate::{NetError, Result, clip};
+
+/// Longest line accepted outside literals. A folder's `UID SEARCH ALL` is answered in one line,
+/// some 8 bytes a message: at 1 MB a folder past 130,000 messages never synced, and the account
+/// signed in again and again. This holds four million.
+const MAX_LINE: usize = 32 << 20;
+
+/// Deepest nesting of parenthesised lists in one response passed to the parser. A message's
+/// `BODYSTRUCTURE` takes about two levels per level of MIME parts (its parameters are a list).
+pub(super) const MAX_NESTING: usize = 64;
+
+/// How deep a response's parenthesised lists nest, outside quoted strings and literals.
+pub(super) fn nesting(raw: &[u8]) -> usize {
+    let (mut depth, mut deepest, mut i) = (0usize, 0usize, 0usize);
+    let mut quoted = false;
+    while let Some(&b) = raw.get(i) {
+        i += 1;
+        if quoted {
+            match b {
+                b'\\' => i += 1,
+                b'"' => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => quoted = true,
+            b'(' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b')' => depth = depth.saturating_sub(1),
+            // A literal: its bytes, after the line end, are data.
+            b'\n' => {
+                let line = raw.get(..i.saturating_sub(1)).unwrap_or_default();
+                let line = line.strip_suffix(b"\r").unwrap_or(line);
+                if let Some(n) = literal_len(line) {
+                    i = i.saturating_add(n);
+                }
+            }
+            _ => {}
+        }
+    }
+    deepest
+}
+
+/// What one command may cost: the bytes and number of its responses, and how long it may run.
+/// Past any of them the command fails, and the connection is to be dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Limits {
+    /// Total bytes of one command's responses. A chunk of headers stays well under this; a
+    /// single message is at most [`MAX_LITERAL`].
+    pub(super) bytes: usize,
+    /// Number of responses to one command (a big folder's `UID FETCH … FLAGS` gets one per
+    /// message; chunks keep that in the hundreds).
+    pub(super) responses: usize,
+    /// Wall time for one command, so a server trickling a byte just inside the read timeout
+    /// can't hold a command forever.
+    pub(super) time: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits { bytes: 4 * MAX_LITERAL, responses: 1_000_000, time: Duration::from_secs(15 * 60) }
+    }
+}
+
+/// The error for a command whose responses ran past its byte or count budget.
+fn over_budget() -> NetError {
+    NetError::TooLarge("one command's responses went over MailALM's size budget".into())
+}
+
+/// Buffered protocol connection.
+pub(super) struct Conn<S> {
+    s: S,
+    pub(super) buf: Vec<u8>,
+    pub(super) pos: usize,
+    tag: u32,
+    limits: Limits,
+    /// Bytes and responses read since the current command began.
+    used_bytes: usize,
+    used_count: usize,
+    /// When the current command must be done by (`None`: none running).
+    deadline: Option<Instant>,
+    /// How far the response at the front of the buffer was looked through ([`Conn::complete_len`]).
+    scanned: Scanned,
+}
+
+/// How far the response not yet whole at the front of a [`Conn`]'s buffer was looked through,
+/// counted from its start (`pos`, which moves only as a response is taken, and then this starts
+/// over): where its first line not yet whole starts (those before it, with their literals, are
+/// whole), and how far that line was searched for its end without finding it. Or the line is
+/// whole and the literal it announces isn't: where the literal starts and how long it is, so the
+/// line isn't read again as the literal comes.
+#[derive(Clone, Copy, Debug, Default)]
+struct Scanned {
+    i: usize,
+    searched: usize,
+    literal: Option<(usize, usize)>,
+}
+
+impl<S: Read + Write> Conn<S> {
+    pub(super) fn new(s: S) -> Self {
+        Conn {
+            s,
+            buf: Vec::with_capacity(16 << 10),
+            pos: 0,
+            tag: 0,
+            limits: Limits::default(),
+            used_bytes: 0,
+            used_count: 0,
+            deadline: None,
+            scanned: Scanned::default(),
+        }
+    }
+
+    /// Replace the per-command budget (the hostile-server tests shrink it).
+    #[cfg(test)]
+    pub(super) fn set_limits(&mut self, budget: Limits) {
+        self.limits = budget;
+    }
+
+    /// Give back the underlying stream (STARTTLS wraps it; tests read what was written).
+    pub(super) fn into_inner(self) -> S {
+        self.s
+    }
+
+    /// The underlying stream.
+    pub(super) fn stream(&self) -> &S {
+        &self.s
+    }
+
+    /// How many bytes were read from the server and not yet taken as a response.
+    pub(super) fn unread(&self) -> usize {
+        self.buf.get(self.pos..).map_or(0, <[u8]>::len)
+    }
+
+    fn next_tag(&mut self) -> String {
+        self.tag = self.tag.wrapping_add(1);
+        format!("M{}", self.tag)
+    }
+
+    /// Start counting a new command against the limits.
+    pub(super) fn begin(&mut self) {
+        self.used_bytes = 0;
+        self.used_count = 0;
+        self.deadline = Instant::now().checked_add(self.limits.time);
+    }
+
+    /// Bytes the current command may still receive.
+    fn room(&self) -> usize {
+        self.limits.bytes.saturating_sub(self.used_bytes)
+    }
+
+    /// The length of the complete response at the front of the buffer, if there is one. Taken up
+    /// where the last look stopped ([`Scanned`]): a line of 30 MB comes 32 KB a read, and each
+    /// read looked through all of it again.
+    fn complete_len(&mut self) -> Result<Option<usize>> {
+        let data = self.buf.get(self.pos..).unwrap_or_default();
+        let Scanned { mut i, mut searched, mut literal } = self.scanned;
+        loop {
+            let (at, n) = match literal.take() {
+                Some(awaited) => awaited,
+                None => {
+                    let rest = data.get(i..).unwrap_or_default();
+                    // The line's bytes looked through already hold no line end.
+                    let from = searched.saturating_sub(i);
+                    let Some(nl) = rest.get(from..).and_then(|r| r.iter().position(|&b| b == b'\n')).map(|p| p + from) else {
+                        if rest.len() > MAX_LINE {
+                            return Err(NetError::TooLarge("response line too long".into()));
+                        }
+                        self.scanned = Scanned { i, searched: data.len(), literal: None };
+                        return Ok(None);
+                    };
+                    if nl > MAX_LINE {
+                        return Err(NetError::TooLarge("response line too long".into()));
+                    }
+                    let line = rest.get(..nl).unwrap_or_default();
+                    let line = line.strip_suffix(b"\r").unwrap_or(line);
+                    let at = i + nl + 1;
+                    match literal_len(line) {
+                        Some(n) if n > MAX_LITERAL => return Err(NetError::TooLarge(format!("literal of {n} bytes"))),
+                        Some(n) => (at, n),
+                        None => {
+                            // The next response starts after this one: looked at from its start.
+                            self.scanned = Scanned::default();
+                            return Ok(Some(at));
+                        }
+                    }
+                }
+            };
+            // Refuse before buffering it: the literal would take the command past its byte cap.
+            // Asked again each time more has come (the room may have changed).
+            let end = at.saturating_add(n);
+            if end > self.room() {
+                return Err(over_budget());
+            }
+            if data.len() < end {
+                self.scanned = Scanned { i, searched, literal: Some((at, n)) };
+                return Ok(None);
+            }
+            i = end;
+            searched = end;
+        }
+    }
+
+    fn fill(&mut self) -> Result<()> {
+        if self.deadline.is_some_and(|d| Instant::now() >= d) {
+            return Err(NetError::Io("the server took too long to answer one command".into()));
+        }
+        if self.pos > 0 && (self.pos == self.buf.len() || self.pos > (1 << 20)) {
+            self.buf.drain(..self.pos);
+            self.pos = 0;
+        }
+        let mut tmp = [0u8; 32 << 10];
+        let n = self.s.read(&mut tmp)?;
+        if n == 0 {
+            return Err(NetError::Closed("connection closed".into()));
+        }
+        self.buf.extend_from_slice(tmp.get(..n).unwrap_or_default());
+        Ok(())
+    }
+
+    /// The next complete response's bytes, counted against the current command's limits.
+    pub(super) fn read_raw(&mut self) -> Result<Vec<u8>> {
+        loop {
+            if let Some(n) = self.complete_len()? {
+                self.used_bytes = self.used_bytes.saturating_add(n);
+                self.used_count = self.used_count.saturating_add(1);
+                if self.used_bytes > self.limits.bytes || self.used_count > self.limits.responses {
+                    return Err(over_budget());
+                }
+                let out = self.buf.get(self.pos..self.pos + n).map(<[u8]>::to_vec).unwrap_or_default();
+                self.pos += n;
+                return Ok(out);
+            }
+            self.fill()?;
+        }
+    }
+
+    /// The next response, parsed. `Err(raw)` when `imap-proto` doesn't understand it.
+    pub(super) fn read(&mut self) -> Result<std::result::Result<Response<'static>, Vec<u8>>> {
+        let raw = self.read_raw()?;
+        // imap-proto wants CRLF line ends; tolerate servers that send bare LF.
+        let fixed = super::quotes::plain_quotes(space_after_code(crlf_line_ends(raw)));
+        // imap-proto parses lists by recursion: a thousand nested `(` overflow the thread's
+        // stack, which no `Result` catches. Nothing real nests that deep.
+        if nesting(&fixed) > MAX_NESTING {
+            return Ok(Err(fixed));
+        }
+        // A panic inside imap-proto (`INTERNALDATE NIL` was one: it unwraps the date) would end
+        // the worker thread: the response is one it doesn't understand instead.
+        let parsed = std::panic::catch_unwind(|| Response::parse(&fixed).ok().map(|(_, r)| r.into_owned()));
+        Ok(match parsed {
+            Ok(Some(r)) => Ok(r),
+            _ => Err(fixed),
+        })
+    }
+
+    fn send(&mut self, bytes: &[u8]) -> Result<()> {
+        self.s.write_all(bytes)?;
+        self.s.flush()?;
+        Ok(())
+    }
+
+    /// Run a command; returns the untagged responses followed by the tagged completion.
+    pub(super) fn run(&mut self, parts: &[Part<'_>]) -> Result<Vec<Response<'static>>> {
+        let tag = self.next_tag();
+        self.begin();
+        let mut collected = Vec::new();
+        let mut line: Vec<u8> = format!("{tag} ").into_bytes();
+        for p in parts {
+            match p {
+                Part::Text(t) => line.extend_from_slice(t.as_bytes()),
+                Part::Literal(bytes) => {
+                    line.extend_from_slice(format!("{{{}}}\r\n", bytes.len()).as_bytes());
+                    self.send(&line)?;
+                    line.clear();
+                    self.wait_continue(&tag, &mut collected)?;
+                    line.extend_from_slice(bytes);
+                }
+            }
+        }
+        line.extend_from_slice(b"\r\n");
+        self.send(&line)?;
+        self.finish(&tag, collected)
+    }
+
+    /// Wait for the server's `+` go-ahead to send a literal. A completion instead is a refusal:
+    /// the literal (a password, a message) is never sent.
+    fn wait_continue(&mut self, tag: &str, collected: &mut Vec<Response<'static>>) -> Result<()> {
+        loop {
+            match self.read()? {
+                Ok(Response::Continue(_)) => return Ok(()),
+                Ok(Response::Done { tag: t, outcome, .. }) if t.0 == tag => return Err(NetError::Server(info(&outcome))),
+                Ok(Response::Data { status: Status::Bye, outcome }) => return Err(NetError::Closed(info(&outcome))),
+                Ok(other) => collected.push(other),
+                Err(raw) => check_unknown(tag, &raw)?,
+            }
+        }
+    }
+
+    fn finish(&mut self, tag: &str, mut collected: Vec<Response<'static>>) -> Result<Vec<Response<'static>>> {
+        loop {
+            match self.read()? {
+                Ok(Response::Done { tag: t, status, outcome }) if t.0 == tag => {
+                    return match status {
+                        Status::Ok => {
+                            collected.push(Response::Done { tag: t, status, outcome });
+                            Ok(collected)
+                        }
+                        _ => Err(NetError::Server(info(&outcome))),
+                    };
+                }
+                Ok(Response::Data { status: Status::Bye, outcome }) => return Err(NetError::Closed(info(&outcome))),
+                Ok(other) => collected.push(other),
+                Err(raw) => check_unknown(tag, &raw)?,
+            }
+        }
+    }
+}
+
+/// A space between a status response's `[code]` and a non-ASCII character after it. imap-proto
+/// 0.17 drops the byte after the `]` (meant to be the space) by slicing the text at 1, which
+/// panics inside a multi-byte character: `* OK [ALERT]é` from a server would crash the client.
+pub(super) fn space_after_code(mut raw: Vec<u8>) -> Vec<u8> {
+    let line = raw.get(..raw.iter().position(|&b| b == b'\n').unwrap_or(raw.len())).unwrap_or_default();
+    // A continuation's space is optional to imap-proto (some servers leave it out).
+    let text = if let Some(rest) = line.strip_prefix(b"+") {
+        rest.strip_prefix(b" ").unwrap_or(rest)
+    } else {
+        // `tag status text`: skip the tag, then the status word; the text is what follows.
+        let after_tag = line.iter().position(|&b| b == b' ').and_then(|sp| line.get(sp + 1..)).unwrap_or_default();
+        let (status, text) = match after_tag.iter().position(|&b| b == b' ') {
+            Some(sp) => (after_tag.get(..sp).unwrap_or_default(), after_tag.get(sp + 1..).unwrap_or_default()),
+            None => (after_tag, &[][..]),
+        };
+        let status = String::from_utf8_lossy(status).to_ascii_uppercase();
+        if !["OK", "NO", "BAD", "PREAUTH", "BYE"].contains(&status.as_str()) {
+            return raw;
+        }
+        text
+    };
+    if text.first() != Some(&b'[') {
+        return raw;
+    }
+    let Some(close) = text.iter().position(|&b| b == b']') else { return raw };
+    if text.get(close + 1).is_some_and(|b| !b.is_ascii()) {
+        let at = line.len() - text.len() + close + 1;
+        raw.insert(at, b' ');
+    }
+    raw
+}
+
+/// `raw` with each line's bare line feed given its carriage return (so `\n` becomes `\r\n`), and
+/// the `{n}` literals after lines left as they came: data, which the count says the length of.
+/// `raw` itself, not copied, when every line ends in CRLF already.
+fn crlf_line_ends(raw: Vec<u8>) -> Vec<u8> {
+    let mut fixed: Option<Vec<u8>> = None;
+    // Where the current line starts, and how much of `raw` is in `fixed` already.
+    let (mut i, mut copied) = (0usize, 0usize);
+    while let Some(nl) = raw.get(i..).and_then(|rest| rest.iter().position(|&b| b == b'\n')).map(|p| i + p) {
+        let line = raw.get(i..nl).unwrap_or_default();
+        let stripped = line.strip_suffix(b"\r");
+        if stripped.is_none() {
+            let out = fixed.get_or_insert_with(|| Vec::with_capacity(raw.len().saturating_add(raw.len() / 16)));
+            out.extend_from_slice(raw.get(copied..nl).unwrap_or_default());
+            out.push(b'\r');
+            copied = nl;
+        }
+        i = nl + 1;
+        if let Some(n) = literal_len(stripped.unwrap_or(line)) {
+            i = i.saturating_add(n);
+        }
+    }
+    match fixed {
+        Some(mut out) => {
+            out.extend_from_slice(raw.get(copied..).unwrap_or_default());
+            out
+        }
+        None => raw,
+    }
+}
+
+/// A response `imap-proto` couldn't parse: harmless if untagged; for our tag, read the status
+/// by hand so an odd completion line doesn't hang the command. Only its length is logged: what
+/// the server sends is never written to the log.
+fn check_unknown(tag: &str, raw: &[u8]) -> Result<()> {
+    let text = String::from_utf8_lossy(raw);
+    let mut words = text.split_whitespace();
+    if words.next() == Some(tag) {
+        let status = words.next().unwrap_or("").to_ascii_uppercase();
+        let rest: Vec<&str> = words.collect();
+        return match status.as_str() {
+            "OK" => Err(NetError::Protocol(format!("unparsed completion: {}", clip(&text)))),
+            _ => Err(NetError::Server(clip(&rest.join(" ")))),
+        };
+    }
+    log::debug!("ignoring an unparsed response of {} bytes", raw.len());
+    Ok(())
+}
+
+/// The size a line announces for the literal after it: `{123}`, or the non-synchronising
+/// `{123+}` (RFC 7888), as the line's last bytes. At most twelve digits, so it can't overflow.
+pub(super) fn literal_len(line: &[u8]) -> Option<usize> {
+    let inside = match line.split_last() {
+        Some((&b'}', head)) => head,
+        _ => return None,
+    };
+    let inside = match inside.split_last() {
+        Some((&b'+', head)) => head,
+        _ => inside,
+    };
+    let count = inside.iter().rev().take_while(|b| b.is_ascii_digit()).count();
+    let brace = inside.len().checked_sub(count)?.checked_sub(1)?;
+    if count == 0 || count > 12 || inside.get(brace) != Some(&b'{') {
+        return None;
+    }
+    inside.get(brace + 1..)?.iter().try_fold(0usize, |n, &d| n.checked_mul(10)?.checked_add(usize::from(d - b'0')))
+}
