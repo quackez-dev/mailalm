@@ -1280,7 +1280,7 @@ impl MailApp {
                             Row::Message { source, pos } => {
                                 let Some((account, folder, s)) = self.lookup(&self.list.sources, source, pos) else { continue };
                                 let key = MessageKey { account, folder: folder.to_owned(), uid: s.uid };
-                                let response = ui.interact(rect, ui.id().with(("mailalm-row", account.0, folder, s.uid)), Sense::click());
+                                let response = ui.interact(rect, ui.scope_id().with(("mailalm-row", account.0, folder, s.uid)), Sense::click());
                                 let selected = self.selected.as_ref() == Some(&key);
                                 let stripe = mark_accounts.then(|| self.color_of(account));
                                 message_row(ui.painter(), rect, s, selected, response.hovered(), stripe);

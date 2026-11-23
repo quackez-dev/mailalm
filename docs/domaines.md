@@ -17,8 +17,8 @@ mise à jour automatique, pas de rapport de plantage, pas d'autoconfiguration pa
   s'accordent pas sur les serveurs d'envoi. Ils sont affichés et modifiables dans la fenêtre d'ajout de compte.
 - Toutes les connexions sont chiffrées (TLS, ou STARTTLS exigé). Il n'existe pas d'option sans chiffrement ni
   d'exception de certificat.
-- La vérification des certificats utilise les autorités de Windows et refuse les certificats que Windows désigne
-  comme non fiables (magasin `Disallowed`).
+- La vérification des certificats utilise les autorités de Mozilla (incluses dans MailALM) et celles de Windows,
+  moins les certificats que Windows désigne comme non fiables (magasin `Disallowed`).
 
 ## Phases suivantes
 
