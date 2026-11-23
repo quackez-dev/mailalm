@@ -28,7 +28,7 @@ pub fn resize_edges(ui: &mut Ui) {
         (ResizeDirection::SouthWest, Rect::from_min_max(egui::pos2(l, b - EDGE), egui::pos2(l + EDGE, b)), CursorIcon::ResizeNeSw),
     ];
     for (n, (dir, rect, cursor)) in bands.into_iter().enumerate() {
-        let response = ui.interact(rect, Id::new(("mailalm-resize", n)), Sense::drag());
+        let response = ui.interact(rect, Id::unique(("mailalm-resize", n)), Sense::drag());
         if response.hovered() || response.dragged() {
             ctx.set_cursor_icon(cursor);
         }
@@ -40,7 +40,7 @@ pub fn resize_edges(ui: &mut Ui) {
 
 /// Moves the window when the title bar is dragged; a double click maximizes or restores it.
 pub fn title_bar_drag(ui: &mut Ui, rect: Rect) {
-    let response = ui.interact(rect, Id::new("mailalm-title-drag"), Sense::click_and_drag());
+    let response = ui.interact(rect, Id::unique("mailalm-title-drag"), Sense::click_and_drag());
     let ctx = ui.ctx();
     if response.drag_started() {
         ctx.send_viewport_cmd(ViewportCommand::StartDrag);

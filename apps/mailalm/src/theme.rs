@@ -3,7 +3,6 @@
 
 use egui::Color32;
 
-pub const BG: Color32 = Color32::from_rgb(0x14, 0x17, 0x1b);
 pub const PANEL: Color32 = Color32::from_rgb(0x1a, 0x1e, 0x23);
 pub const PANEL2: Color32 = Color32::from_rgb(0x1f, 0x24, 0x2a);
 pub const RAISED: Color32 = Color32::from_rgb(0x25, 0x2b, 0x32);
@@ -18,7 +17,6 @@ pub const TITLE: Color32 = Color32::from_rgb(0x0e, 0x6b, 0x69);
 pub const TITLE_TEXT: Color32 = Color32::WHITE;
 pub const SEL: Color32 = Color32::from_rgb(0x1c, 0x3a, 0x3b);
 pub const OK: Color32 = Color32::from_rgb(0x7d, 0xd7, 0xa1);
-pub const OK_BG: Color32 = Color32::from_rgb(0x16, 0x31, 0x26);
 pub const WARN: Color32 = Color32::from_rgb(0xf4, 0xc4, 0x6a);
 pub const WARN_BG: Color32 = Color32::from_rgb(0x3b, 0x2c, 0x10);
 pub const DANGER: Color32 = Color32::from_rgb(0xff, 0x9d, 0x96);

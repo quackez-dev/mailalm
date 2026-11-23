@@ -300,7 +300,7 @@ impl MailApp {
         let accounts: Vec<(AccountId, String, String, Color32)> =
             self.ws.accounts().iter().map(|a| (a.id, a.name.clone(), a.address.clone(), t::account(a.color))).collect();
         let mut chosen: Option<String> = None;
-        let area = egui::Area::new(Id::new("mailalm-create-menu"))
+        let area = egui::Area::new(Id::unique("mailalm-create-menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(anchor + vec2(0.0, 4.0))
             .show(&ctx, |ui| {
