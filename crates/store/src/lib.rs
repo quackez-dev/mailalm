@@ -9,6 +9,7 @@
 //!   pending.json              changes not yet confirmed by the server, in order
 //!   f-<key>/state.json        the folder's path, UIDVALIDITY and UIDNEXT
 //!   f-<key>/index.json        the message summaries
+//!   f-<key>/ids.json          Outlook: each message's local number and its id on the server
 //!   f-<key>/<uid>.eml         a message, as the server sent it
 //!   f-<key>/<uid>.txt         its text, for the search
 //! ```
@@ -32,6 +33,10 @@ pub struct FolderState {
     pub path: String,
     pub uidvalidity: u32,
     pub uidnext: u32,
+    /// Outlook (Graph): where the next sync of the folder starts (its delta link). `uidnext` is
+    /// then the next local number to give a message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<String>,
 }
 
 /// One account's cache.
@@ -150,6 +155,17 @@ impl Store {
         Ok(())
     }
 
+    /// Outlook (Graph): the local number of each message of the folder and its id on the server.
+    pub fn ids(&self, path: &str) -> Vec<(u32, String)> {
+        read_json(&self.folder_dir(path).join("ids.json")).unwrap_or_default()
+    }
+
+    pub fn save_ids(&self, path: &str, ids: &[(u32, String)]) -> io::Result<()> {
+        let dir = self.folder_dir(path);
+        fs::create_dir_all(&dir)?;
+        write_json(&dir.join("ids.json"), &ids)
+    }
+
     /// Changes waiting for the server, oldest first.
     pub fn pending(&self) -> Vec<Change> {
         read_json(&self.root.join("pending.json")).unwrap_or_default()
@@ -229,7 +245,9 @@ mod tests {
         s.remove_messages("Work/2026", &[7, 8]).expect("remove");
         assert!(!s.has_message("Work/2026", 7));
 
-        let state = FolderState { path: "Work/2026".into(), uidvalidity: 5, uidnext: 9 };
+        let state = FolderState { path: "Work/2026".into(), uidvalidity: 5, uidnext: 9, delta: Some("https://graph.example/delta".into()) };
+        s.save_ids("Work/2026", &[(1, "AAMk-1".into())]).expect("ids");
+        assert_eq!(s.ids("Work/2026"), vec![(1, "AAMk-1".to_string())]);
         s.save_folder_state(&state).expect("state");
         assert_eq!(s.folder_state("Work/2026"), Some(state));
         s.clear_folder("Work/2026").expect("clear");

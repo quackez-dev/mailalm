@@ -24,12 +24,20 @@ file starts with a comment naming its origin and what changed. The copy was read
 | `crates/net/src/imap.rs` | `crates/net/src/protocols/imap.rs`, with `quote` from `crates/net/src/protocols.rs` and `days_from_civil` from `crates/model/src/dates.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/imap/conn.rs` | `crates/net/src/protocols/imap/conn.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/imap/quotes.rs` | `crates/net/src/protocols/imap/quotes.rs` | MIT OR Apache-2.0 |
-| `crates/net/src/imap/sign_in.rs` | `crates/net/src/protocols/imap/sign_in.rs`, with `encode` from `crates/model/src/encoding/base64.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/imap/sign_in.rs` | `crates/net/src/protocols/imap/sign_in.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/imap/folders.rs` | `crates/net/src/protocols/imap/folders.rs`, with `FolderRole::from_attribute` from `crates/model/src/folder.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/imap/messages.rs` | `crates/net/src/protocols/imap/messages.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/imap/utf7.rs` | `crates/model/src/encoding/utf7.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/imap/tests.rs` | `crates/net/src/protocols/imap/tests.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/smtp.rs` | `crates/net/src/protocols/smtp.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/base64.rs` | `encode` from `crates/model/src/encoding/base64.rs`, `b64url` from `crates/net/src/oauth.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/http.rs` | `crates/net/src/http.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/http/body.rs` | `crates/net/src/http/body.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/http/tests.rs` | `crates/net/src/http/tests.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/oauth.rs` | `crates/net/src/oauth.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/oauth/tests.rs` | the tests in `crates/net/src/oauth.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/graph.rs` | `crates/net/src/exchange/graph.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/graph/convert.rs` | `flags` from `crates/net/src/exchange/graph/flags.rs`, `address` from `crates/net/src/exchange/graph.rs` | MIT OR Apache-2.0 |
 
 The test certificates and keys in `crates/net/src/stream/trust/test_certs.rs` were made up for
 MailCraft's tests; they are compiled into tests only and are used nowhere else.

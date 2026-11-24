@@ -1,5 +1,6 @@
 //! The main window, as the validated mockups draw it: title bar, command bar, folders (accounts
-//! in an accordion), message list, reading pane and status bar. Phase 2: real IMAP accounts.
+//! in an accordion), message list, reading pane and status bar. IMAP accounts (phase 2) and Outlook
+//! accounts through Microsoft Graph (phase 3).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,9 +11,9 @@ use egui::{
 };
 use mailalm_engine::{Command, Engine, Link};
 use mailalm_mime::Outgoing;
-use mailalm_model::{Account, AccountId, Change, Focus, FolderRole, NewMail, Person, Summary, Workspace, account_color};
+use mailalm_model::{Account, AccountId, Change, Focus, FolderRole, NewMail, Person, Provider, Summary, Workspace, account_color};
 
-use crate::accounts::{AccountForm, FormResult};
+use crate::accounts::{AccountForm, FormResult, Secret};
 use crate::compose::{Compose, ComposeAction};
 use crate::icons::{self, Icon};
 use crate::mailbox::{Mailboxes, MessageKey, Outcome, Reading};
@@ -442,6 +443,42 @@ impl MailApp {
         }
     }
 
+    /// The Junk menu: 0 report junk, 1 not junk, 2 block sender. Outlook reports the message to
+    /// Outlook.com (Graph `reportMessage`, which also moves it); IMAP moves the message.
+    fn junk_action(&mut self, n: usize) {
+        let Some(key) = self.selected.clone() else {
+            self.say("Select a message first.");
+            return;
+        };
+        let outlook = self.account(key.account).is_some_and(|a| a.provider == Provider::Outlook);
+        match (n, outlook) {
+            (0, true) => self.mark_junk(&key, true),
+            (0, false) => self.move_selected(FolderRole::Junk),
+            (1, true) => self.mark_junk(&key, false),
+            (1, false) => self.move_selected(FolderRole::Inbox),
+            (_, true) => self.say(
+                "Microsoft's API cannot change Outlook.com's blocked senders: block this sender in Outlook.com's settings (Mail, Junk email). MailALM's own blocking arrives with the rules (phase 8).",
+            ),
+            (_, false) => self.say("Blocking a sender on an IMAP account arrives with the rules (phase 8)."),
+        }
+    }
+
+    fn mark_junk(&mut self, key: &MessageKey, junk: bool) {
+        let in_folder = self.boxes.account(key.account).and_then(|s| s.folder(&key.folder)).map(|f| f.role);
+        if !junk && in_folder != Some(FolderRole::Junk) {
+            self.say("Only a message in Junk can be marked as not junk.");
+            return;
+        }
+        self.select_after_removal(key);
+        self.engine.send(key.account, Command::Apply(Change::MarkJunk { folder: key.folder.clone(), uids: vec![key.uid], junk }));
+        self.drop_hit(key);
+        self.say(if junk {
+            "Reported to Outlook.com as junk, and moved to Junk."
+        } else {
+            "Reported to Outlook.com as not junk, and moved back to the Inbox."
+        });
+    }
+
     fn move_to(&mut self, key: &MessageKey, to: String) {
         self.select_after_removal(key);
         self.engine.send(key.account, Command::Apply(Change::Move { folder: key.folder.clone(), uids: vec![key.uid], to }));
@@ -563,10 +600,13 @@ impl MailApp {
 
     // ---- accounts ----
 
-    fn finish_form(&mut self, account: Account, password: Option<String>) {
-        if let Some(p) = password
-            && let Err(e) = mailalm_engine::secrets::set_password(account.id, &p)
-        {
+    fn finish_form(&mut self, account: Account, secret: Option<Secret>) {
+        let kept = match &secret {
+            Some(Secret::Password(p)) => mailalm_engine::secrets::set_password(account.id, p),
+            Some(Secret::RefreshToken(t)) => mailalm_engine::secrets::set_refresh_token(account.id, t),
+            None => Ok(()),
+        };
+        if let Err(e) = kept {
             self.warn(e);
             return;
         }
@@ -777,13 +817,11 @@ impl MailApp {
                             }
                         }
                         ui.separator();
-                        ui.label(RichText::new("IMAP accounts: moved to the server's Junk folder.").size(11.0).color(t::MUTED));
+                        ui.label(RichText::new("Outlook: reported to Outlook.com, which moves the message.").size(11.0).color(t::MUTED));
+                        ui.label(RichText::new("IMAP: moved to the server's Junk folder.").size(11.0).color(t::MUTED));
                     });
-                    match junk {
-                        Some(0) => self.move_selected(FolderRole::Junk),
-                        Some(1) => self.move_selected(FolderRole::Inbox),
-                        Some(_) => self.say("Blocking a sender arrives with the rules (phase 8); Outlook and Gmail block on their server (phases 3 and 4)."),
-                        None => {}
+                    if let Some(n) = junk {
+                        self.junk_action(n);
                     }
                     separator(ui);
                     self.move_menu(ui);
@@ -1165,7 +1203,9 @@ impl MailApp {
         if response.clicked() {
             self.focus_account(id);
         }
-        if link == Link::SignInRefused && ui.small_button("Sign-in refused: check the password…").clicked() {
+        let outlook = self.ws.account(id).is_some_and(|a| a.provider == Provider::Outlook);
+        let fix = if outlook { "Sign-in refused: sign in again…" } else { "Sign-in refused: check the password…" };
+        if link == Link::SignInRefused && ui.small_button(fix).clicked() {
             if let Some(a) = self.ws.account(id) {
                 self.form = Some(AccountForm::edit(a));
             }
@@ -1501,7 +1541,7 @@ impl MailApp {
                 ui.add_space(120.0);
                 ui.label(RichText::new("Welcome to MailALM").size(24.0).strong());
                 ui.add_space(8.0);
-                ui.label(RichText::new("Add your Vidéotron, Bell or other IMAP account to start.").color(t::MUTED));
+                ui.label(RichText::new("Add your Vidéotron, Bell, Hotmail, Outlook.com or other IMAP account to start.").color(t::MUTED));
                 ui.label(RichText::new("Outlook and Gmail arrive in the next phases.").color(t::FAINT));
                 ui.add_space(16.0);
                 if ui.add(Button::new(RichText::new("Add an account").strong().color(t::ON_ACCENT)).fill(t::ACCENT)).clicked() {
@@ -1537,6 +1577,7 @@ impl MailApp {
                             ui.label(RichText::new(&a.name).strong());
                             let servers = match (&a.imap, &a.smtp) {
                                 (Some(i), Some(s)) => format!("{} · IMAP {}:{} · SMTP {}:{}", a.address, i.host, i.port, s.host, s.port),
+                                _ if a.provider == Provider::Outlook => format!("{} · Outlook.com (Microsoft Graph)", a.address),
                                 _ => a.address.clone(),
                             };
                             ui.label(RichText::new(servers).size(12.0).color(t::FAINT));
@@ -1568,7 +1609,7 @@ impl MailApp {
             ui.label(RichText::new("ABOUT").size(11.0).strong().color(t::FAINT));
             ui.add_space(6.0);
             ui.label(RichText::new(format!("MailALM {} · MIT OR Apache-2.0", env!("CARGO_PKG_VERSION"))).color(t::MUTED));
-            ui.label(RichText::new("Passwords are kept in the Windows Credential Manager. The mail cache is in your local application data folder.").size(12.0).color(t::FAINT));
+            ui.label(RichText::new("Passwords and Microsoft sign-ins are kept in the Windows Credential Manager. The mail cache is in your local application data folder.").size(12.0).color(t::FAINT));
         });
         if back {
             self.page = Page::Mail;
@@ -1594,13 +1635,13 @@ impl MailApp {
             match form.show(&ctx, id, color) {
                 FormResult::Open => {}
                 FormResult::Cancelled => self.form = None,
-                FormResult::Done(account, password) => {
+                FormResult::Done(account, secret) => {
                     self.form = None;
                     let mut account = account;
                     if self.account(account.id).is_none() {
                         account.id = self.settings.take_id();
                     }
-                    self.finish_form(account, password);
+                    self.finish_form(account, secret);
                 }
             }
         }
@@ -1611,7 +1652,7 @@ impl MailApp {
                 ui.set_width(420.0);
                 ui.heading(format!("Remove {name}?"));
                 ui.add_space(6.0);
-                ui.label("MailALM forgets the account, its password and its cached mail on this PC. The mail on the server is not touched.");
+                ui.label("MailALM forgets the account, its password or sign-in and its cached mail on this PC. The mail on the server is not touched.");
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("Remove").clicked() {

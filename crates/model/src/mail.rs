@@ -201,13 +201,20 @@ pub enum Change {
     Move { folder: String, uids: Vec<u32>, to: String },
     /// Removes for good (from the Trash, or when there is no Trash).
     Delete { folder: String, uids: Vec<u32> },
+    /// Outlook (Graph `reportMessage`): reports the messages to Outlook.com as junk and moves them
+    /// to Junk, or as not junk and moves them back to the Inbox. IMAP moves them.
+    MarkJunk { folder: String, uids: Vec<u32>, junk: bool },
 }
 
 impl Change {
     /// The folder the change applies to.
     pub fn folder(&self) -> &str {
         match self {
-            Change::SetSeen { folder, .. } | Change::SetFlagged { folder, .. } | Change::Move { folder, .. } | Change::Delete { folder, .. } => folder,
+            Change::SetSeen { folder, .. }
+            | Change::SetFlagged { folder, .. }
+            | Change::Move { folder, .. }
+            | Change::Delete { folder, .. }
+            | Change::MarkJunk { folder, .. } => folder,
         }
     }
 }

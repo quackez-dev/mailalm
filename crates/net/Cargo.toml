@@ -1,6 +1,6 @@
 [package]
 name = "mailalm-net"
-description = "MailALM network layer: blocking IMAP client and SMTP submission, always over verified TLS (adapted from MailCraft)"
+description = "MailALM network layer: blocking IMAP client, SMTP submission, Microsoft sign-in (OAuth 2.0 with PKCE) and Microsoft Graph mail over HTTPS, always over verified TLS (adapted from MailCraft)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,6 +22,10 @@ webpki-roots = { workspace = true }
 rustls-native-certs = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+# Microsoft Graph and the sign-in service answer in JSON.
+serde_json = { workspace = true }
+# PKCE's SHA-256 and the sign-in's random values (already built for rustls).
+ring = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 # The certificates Windows distrusts (`Disallowed`), refused even when among the roots.

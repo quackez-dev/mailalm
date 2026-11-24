@@ -6,10 +6,11 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use mailalm_mime::Outgoing;
-use mailalm_model::{Account, AccountId, Change, Flags, Folder, FolderRole, Query, Summary, sort_folders};
+use mailalm_model::{Account, AccountId, Change, Flags, Folder, FolderRole, Summary, sort_folders};
 use mailalm_net::{ImapSession, Mailbox, NetError};
 use mailalm_store::{FolderState, Store};
 
+use crate::local::{self, sort_newest_first};
 use crate::{Command, Event, Link, Wake, secrets};
 
 /// How often the Inbox and the open folder are checked for new mail.
@@ -25,8 +26,6 @@ const FLAG_WINDOW: usize = 2_000;
 const PREFETCH_INBOX: usize = 100;
 const PREFETCH_OTHER: usize = 20;
 const PREFETCH_MAX_SIZE: u32 = 2 * 1024 * 1024;
-/// The most results a search returns per account.
-const MAX_HITS: usize = 1_000;
 
 pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events: Sender<Event>, wake: Wake) {
     let store = match Store::open(&base, account.id) {
@@ -408,7 +407,7 @@ impl Worker {
             }
         }
         // Changes still waiting for the server win over what it says.
-        self.overlay_pending(&path, &mut summaries);
+        local::overlay_pending(&self.store, &path, &mut summaries);
 
         // New messages, newest first, by batches shown as they come.
         let mut new: Vec<u32> = server.iter().copied().filter(|u| !known.contains(u)).collect();
@@ -452,7 +451,7 @@ impl Worker {
         self.catch_up(&path, &mut summaries);
         sort_newest_first(&mut summaries);
         let _ = self.store.save_summaries(&path, &summaries);
-        let _ = self.store.save_folder_state(&FolderState { path: path.clone(), uidvalidity: mailbox.uidvalidity, uidnext: mailbox.uidnext });
+        let _ = self.store.save_folder_state(&FolderState { path: path.clone(), uidvalidity: mailbox.uidvalidity, uidnext: mailbox.uidnext, delta: None });
         self.update_counts(&path, &summaries);
         self.emit(Event::Summaries { account: self.id, folder: path.clone(), summaries: summaries.clone() });
 
@@ -463,7 +462,7 @@ impl Worker {
     /// What happened to the folder while the sync was serving the user: changes made in the cache
     /// (still waiting for the server), and previews of messages opened.
     fn catch_up(&self, path: &str, summaries: &mut Vec<Summary>) {
-        self.overlay_pending(path, summaries);
+        local::overlay_pending(&self.store, path, summaries);
         let cached: HashMap<u32, Summary> = self.store.summaries(path).into_iter().filter(|s| !s.preview.is_empty()).map(|s| (s.uid, s)).collect();
         for s in summaries.iter_mut().filter(|s| s.preview.is_empty()) {
             if let Some(c) = cached.get(&s.uid) {
@@ -514,8 +513,7 @@ impl Worker {
     }
 
     fn update_counts(&mut self, path: &str, summaries: &[Summary]) {
-        let total = u32::try_from(summaries.len()).unwrap_or(u32::MAX);
-        let unread = u32::try_from(summaries.iter().filter(|s| !s.flags.seen).count()).unwrap_or(u32::MAX);
+        let (total, unread) = local::counts(summaries);
         if let Some(f) = self.folders.iter_mut().find(|f| f.path == path)
             && (f.total != total || f.unread != unread)
         {
@@ -565,7 +563,7 @@ impl Worker {
     /// Makes the change in the cache, queues it for the server, sends it if online, and syncs the
     /// folder messages were moved to.
     fn apply(&mut self, change: Change, commands: &Receiver<Command>) {
-        let moved = moved_to(Some(&change));
+        let moved = self.moved_to(&change);
         self.apply_local(change);
         if self.connect().is_some() {
             self.flush_pending();
@@ -581,21 +579,10 @@ impl Worker {
     fn apply_local(&mut self, change: Change) {
         let path = change.folder().to_owned();
         let mut summaries = self.store.summaries(&path);
-        match &change {
-            Change::SetSeen { uids, seen, .. } => {
-                for s in summaries.iter_mut().filter(|s| uids.contains(&s.uid)) {
-                    s.flags.seen = *seen;
-                }
-            }
-            Change::SetFlagged { uids, flagged, .. } => {
-                for s in summaries.iter_mut().filter(|s| uids.contains(&s.uid)) {
-                    s.flags.flagged = *flagged;
-                }
-            }
-            Change::Move { uids, .. } | Change::Delete { uids, .. } => {
-                summaries.retain(|s| !uids.contains(&s.uid));
-                let _ = self.store.remove_messages(&path, uids);
-            }
+        local::apply_to(&mut summaries, &change);
+        let gone = local::removed_by(&change);
+        if !gone.is_empty() {
+            let _ = self.store.remove_messages(&path, gone);
         }
         let _ = self.store.save_summaries(&path, &summaries);
         self.update_counts(&path, &summaries);
@@ -625,6 +612,8 @@ impl Worker {
             let path = change.folder().to_owned();
             let dest_wire = match &change {
                 Change::Move { to, .. } => Some(self.folder(to).map(|f| f.wire).unwrap_or_else(|| to.clone())),
+                // IMAP has no junk command: the messages are moved to Junk, or back to the Inbox.
+                Change::MarkJunk { .. } => self.moved_to(&change).and_then(|to| self.folder(&to)).map(|f| f.wire),
                 _ => None,
             };
             let result = self.in_folder(&path, |s| match &change {
@@ -632,6 +621,10 @@ impl Worker {
                 Change::SetFlagged { uids, flagged, .. } => s.set_flag(uids, "\\Flagged", *flagged),
                 Change::Move { uids, .. } => s.move_to(uids, dest_wire.as_deref().unwrap_or_default()),
                 Change::Delete { uids, .. } => s.delete(uids),
+                Change::MarkJunk { uids, .. } => match dest_wire.as_deref() {
+                    Some(to) => s.move_to(uids, to),
+                    None => Err(NetError::Invalid("this account has no folder to move the messages to".to_owned())),
+                },
             });
             match result {
                 Ok(()) => {
@@ -645,17 +638,6 @@ impl Worker {
                 Err(_) => break,
             }
             let _ = self.store.save_pending(&pending);
-        }
-    }
-
-    /// Changes not yet on the server, applied over what it just said.
-    fn overlay_pending(&self, path: &str, summaries: &mut Vec<Summary>) {
-        for change in self.store.pending().iter().filter(|c| c.folder() == path) {
-            match change {
-                Change::SetSeen { uids, seen, .. } => summaries.iter_mut().filter(|s| uids.contains(&s.uid)).for_each(|s| s.flags.seen = *seen),
-                Change::SetFlagged { uids, flagged, .. } => summaries.iter_mut().filter(|s| uids.contains(&s.uid)).for_each(|s| s.flags.flagged = *flagged),
-                Change::Move { uids, .. } | Change::Delete { uids, .. } => summaries.retain(|s| !uids.contains(&s.uid)),
-            }
         }
     }
 
@@ -714,34 +696,16 @@ impl Worker {
     // ---- Search ----
 
     fn search(&mut self, id: u64, query: &str) {
-        let q = Query::parse(query);
-        let mut hits = Vec::new();
-        if !q.is_empty() {
-            let needs_text = q.terms.iter().any(|t| matches!(t, mailalm_model::query::Term::Text(_)));
-            'folders: for f in &self.folders {
-                for s in self.store.summaries(&f.path) {
-                    let text = if needs_text { self.store.text(&f.path, s.uid) } else { None };
-                    if q.matches(&s, &f.path, text.as_deref()) {
-                        hits.push((f.path.clone(), s));
-                        if hits.len() >= MAX_HITS {
-                            break 'folders;
-                        }
-                    }
-                }
-            }
-        }
-        hits.sort_by(|a, b| b.1.date.cmp(&a.1.date));
+        let hits = local::search(&self.store, &self.folders, query);
         self.emit(Event::SearchResults { account: self.id, id, hits });
     }
-}
 
-fn moved_to(change: Option<&Change>) -> Option<String> {
-    match change {
-        Some(Change::Move { to, .. }) => Some(to.clone()),
-        _ => None,
+    /// The folder a change puts messages in, to sync it after.
+    fn moved_to(&self, change: &Change) -> Option<String> {
+        match change {
+            Change::Move { to, .. } => Some(to.clone()),
+            Change::MarkJunk { junk, .. } => self.folder_with_role(if *junk { FolderRole::Junk } else { FolderRole::Inbox }).map(|f| f.path),
+            _ => None,
+        }
     }
-}
-
-fn sort_newest_first(s: &mut [Summary]) {
-    s.sort_by(|a, b| b.date.cmp(&a.date).then(b.uid.cmp(&a.uid)));
 }

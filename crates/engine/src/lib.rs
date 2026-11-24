@@ -1,6 +1,6 @@
 //! The engine between the interface and the servers.
 //!
-//! Each account has its own worker thread, its own cache ([`mailalm_store::Store`]) and its own
+//! Each account has its own worker thread (IMAP, or Outlook through Microsoft Graph), its own cache ([`mailalm_store::Store`]) and its own
 //! connection: one slow or failing account never holds up another (PLAN.md, section 4.3). The
 //! interface sends [`Command`]s and reads [`Event`]s; it never waits on the network.
 //!
@@ -15,10 +15,14 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use mailalm_mime::{Outgoing, Parsed};
-use mailalm_model::{Account, AccountId, Change, Folder, Summary};
+use mailalm_model::{Account, AccountId, Change, Folder, Provider, Summary};
 
+mod local;
+mod outlook;
 pub mod secrets;
 mod worker;
+
+pub use outlook::{MicrosoftAccount, microsoft_available, microsoft_sign_in};
 
 /// What the interface asks of an account's worker.
 #[derive(Debug)]
@@ -114,17 +118,26 @@ impl Engine {
         Self { base, events_tx, events, wake, workers: HashMap::new() }
     }
 
-    /// Starts an account's worker. Only IMAP accounts have one in this phase.
+    /// Starts an account's worker: IMAP, or Outlook (Microsoft Graph). Gmail comes in phase 4.
     pub fn start(&mut self, account: Account) {
         self.stop(account.id);
+        if account.provider == Provider::Gmail {
+            let _ = self.events_tx.send(Event::Error { account: account.id, text: "Gmail accounts arrive in phase 4.".to_owned() });
+            (self.wake)();
+            return;
+        }
         let (tx, rx) = mpsc::channel();
         let events = self.events_tx.clone();
         let wake = Arc::clone(&self.wake);
         let base = self.base.clone();
         let id = account.id;
+        let provider = account.provider;
         let thread = std::thread::Builder::new()
             .name(format!("mailalm-account-{}", id.0))
-            .spawn(move || worker::run(account, base, rx, events, wake))
+            .spawn(move || match provider {
+                Provider::Outlook => outlook::run(account, base, rx, events, wake),
+                _ => worker::run(account, base, rx, events, wake),
+            })
             .ok();
         if thread.is_none() {
             let _ = self.events_tx.send(Event::Error { account: id, text: "The account's worker could not be started.".to_owned() });
@@ -155,10 +168,11 @@ impl Engine {
         self.events.try_iter().collect()
     }
 
-    /// Removes an account: stops its worker, forgets its password and, if asked, its cache.
+    /// Removes an account: stops its worker, forgets its password or sign-in and, if asked, its
+    /// cache.
     pub fn remove(&mut self, id: AccountId, forget_cache: bool) -> Result<(), String> {
         self.stop(id);
-        secrets::delete_password(id)?;
+        secrets::forget(id)?;
         if forget_cache {
             let store = mailalm_store::Store::open(&self.base, id).map_err(|e| format!("The account's cache could not be opened: {e}"))?;
             store.delete_all().map_err(|e| format!("The account's cache could not be removed: {e}"))?;

@@ -1,5 +1,5 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/lib.rs. MIT OR Apache-2.0.
-// Changed: only IMAP, SMTP and TLS are left; the error type is reduced to what they need, holds text only, and can blank out a secret.
+// Changed: only IMAP, SMTP, Microsoft sign-in, Graph mail and TLS are left; the error type is reduced to what they need, holds text only, and can blank out a secret.
 
 //! MailALM's network layer, all of it blocking (it runs on a worker thread):
 //!
@@ -7,13 +7,22 @@
 //!   Server input is hostile: line, literal and per-command sizes are capped.
 //! * [`smtp::send`]: message submission through `lettre` (RFC 6409, implicit TLS per RFC 8314, or
 //!   STARTTLS, required).
+//! * [`oauth`]: signing in to a Microsoft personal account in the system browser (OAuth 2.0 for
+//!   native apps, RFC 8252, with PKCE), and refreshing its tokens.
+//! * [`graph::GraphClient`]: Outlook.com mail through Microsoft Graph over HTTPS: folders, changes
+//!   by delta query, messages as MIME, marks, moves, deletions, junk reports, sending.
 //!
 //! Every connection is TLS, checked against Mozilla's roots and the system's, less what Windows
 //! distrusts. There is no exception path: no certificate trusted by hand, no clear text. A password
-//! goes only over such a connection, and never into an error message, a log line or a `Debug`.
+//! or a token goes only over such a connection, and never into an error message, a log line or a
+//! `Debug`.
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+mod base64;
+pub mod graph;
+mod http;
 mod imap;
+pub mod oauth;
 pub mod smtp;
 mod stream;
 
@@ -51,6 +60,10 @@ pub enum NetError {
     /// been sent. Never to be sent again without the user saying so (that is how mail arrives twice).
     #[error("the server didn't say whether it took the message ({0}): it may have been sent")]
     Unconfirmed(String),
+    /// The server no longer knows where a sync left off (an expired or invalid delta link): the
+    /// folder is to be synced again from the start. Nothing is wrong with the connection.
+    #[error("the server asked for a full sync again: {0}")]
+    Resync(String),
 }
 
 impl From<std::io::Error> for NetError {
@@ -92,6 +105,7 @@ impl NetError {
             NetError::Closed(t) => NetError::Closed(clean(t)),
             NetError::Invalid(t) => NetError::Invalid(clean(t)),
             NetError::Unconfirmed(t) => NetError::Unconfirmed(clean(t)),
+            NetError::Resync(t) => NetError::Resync(clean(t)),
         }
     }
 }
@@ -119,6 +133,9 @@ mod tests {
         assert!(NetError::Auth("no".into()).is_auth());
         assert!(!NetError::Server("no".into()).is_auth());
         assert!(NetError::TooLarge("x".into()).is_fatal() && !NetError::Server("x".into()).is_fatal());
+        assert!(!NetError::Resync("x".into()).is_fatal() && !NetError::Resync("x".into()).is_auth());
+        let e = NetError::Resync("delta link d-secret-1 expired".into()).without(&["d-secret-1"]);
+        assert_eq!(e.to_string(), "the server asked for a full sync again: delta link *** expired");
         let e = NetError::Server("LOGIN \"zoe\" \"hunter22\" refused".into()).without(&["hunter22", ""]);
         assert_eq!(e.to_string(), "the server refused: LOGIN \"zoe\" \"***\" refused");
     }

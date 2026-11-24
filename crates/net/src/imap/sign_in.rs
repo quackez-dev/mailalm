@@ -1,5 +1,5 @@
-// Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/protocols/imap/sign_in.rs (with `encode` from crates/model/src/encoding/base64.rs). MIT OR Apache-2.0.
-// Changed: password only (no NTLM, no XOAUTH2), no ENABLE QRESYNC or CONDSTORE after it; the password and the PLAIN token are blanked out of any error.
+// Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/protocols/imap/sign_in.rs. MIT OR Apache-2.0.
+// Changed: password only (no NTLM, no XOAUTH2), no ENABLE QRESYNC or CONDSTORE after it; the password and the PLAIN token are blanked out of any error; the base64 encoder is in src/base64.rs.
 
 //! Signing in with a password: `AUTHENTICATE PLAIN` with SASL-IR when offered, else `LOGIN`.
 //! Only ever over TLS ([`super::ImapSession::connect`]).
@@ -36,7 +36,7 @@ impl<S: Read + Write> Client<S> {
     /// Sign in: `AUTHENTICATE PLAIN` with SASL-IR when offered, else `LOGIN`. A user name or
     /// password that isn't printable ASCII goes as a literal, sent only once the server says `+`.
     pub(super) fn login(&mut self, user: &str, pass: &str) -> Result<()> {
-        let token = (self.has("AUTH=PLAIN") && self.has("SASL-IR")).then(|| base64(format!("\0{user}\0{pass}").as_bytes()));
+        let token = (self.has("AUTH=PLAIN") && self.has("SASL-IR")).then(|| crate::base64::encode(format!("\0{user}\0{pass}").as_bytes()));
         let res = if let Some(token) = &token {
             self.cmd(&[Part::Text("AUTHENTICATE PLAIN "), Part::Text(token)])
         } else if self.has("LOGINDISABLED") {
@@ -71,43 +71,5 @@ impl<S: Read + Write> Client<S> {
             }
         }
         self.capability()
-    }
-}
-
-/// `data` in base64 (RFC 4648 §4): the standard alphabet, padded with `=`, on one line.
-fn base64(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3).saturating_mul(4));
-    for chunk in data.chunks(3) {
-        let b = [chunk.first().copied().unwrap_or(0), chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        // A chunk of k bytes gives k + 1 characters; `=` fills the group of four.
-        for (i, shift) in [18u32, 12, 6, 0].into_iter().enumerate() {
-            if i <= chunk.len() {
-                out.push(char::from(ALPHABET.get(((n >> shift) & 63) as usize).copied().unwrap_or(b'A')));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::base64;
-
-    /// RFC 4648 §10's test vectors, and every byte value.
-    #[test]
-    fn base64_rfc_vectors() {
-        for (plain, coded) in
-            [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")]
-        {
-            assert_eq!(base64(plain.as_bytes()), coded, "{plain}");
-        }
-        assert_eq!(base64(b"\0user\0pass"), "AHVzZXIAcGFzcw==");
-        assert_eq!(base64(&[0xFB, 0xFF, 0xBF]), "+/+/");
-        let all: Vec<u8> = (0..=255).collect();
-        assert_eq!(base64(&all).len(), 344);
     }
 }

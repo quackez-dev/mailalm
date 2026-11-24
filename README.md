@@ -3,9 +3,11 @@
 A mail and calendar client for Windows, written in Rust with egui: Outlook.com/Hotmail, Gmail and
 classic IMAP accounts side by side, each kept clearly apart.
 
-**Status: phase 2.** IMAP accounts (Vidéotron, Bell and others): reading, sending in plain text,
+**Status: phase 3.** IMAP accounts (Vidéotron, Bell and others) and Hotmail/Outlook.com accounts
+(Microsoft Graph, signed in on Microsoft's page in the browser): reading, sending in plain text,
 folders, moving, flags, a local cache, search in the cache, and changes made while offline. Outlook
-and Gmail come in phases 3 and 4; attachments can be listed but not opened yet (phase 5).
+accounts report junk to Outlook.com. Gmail comes in phase 4; attachments can be
+listed but not opened yet (phase 5).
 
 ## Principles
 
@@ -25,13 +27,14 @@ The full plan, in French: [PLAN.md](PLAN.md). Ideas kept for later: [IDEES.md](I
 apps/mailalm/     the desktop app (egui)
 crates/model/     accounts, servers, folders, summaries, search queries, workspace rules (pure, tested)
 crates/mime/      reading messages and writing outgoing mail (mail-parser, mail-builder, html2text)
-crates/net/       IMAP, TLS and SMTP, adapted from MailCraft (see ATTRIBUTION.md)
+crates/net/       IMAP, TLS, SMTP, Microsoft sign-in and Graph, adapted from MailCraft (see ATTRIBUTION.md)
 crates/store/     the local cache, one folder per account
-crates/engine/    one worker thread per account: cache first, then the server; offline changes
-docs/             the domains MailALM contacts
+crates/engine/    one worker thread per account (IMAP or Outlook): cache first, then the server; offline changes
+docs/             the domains MailALM contacts; registering MailALM with Microsoft
 ```
 
-Passwords are kept in the Windows Credential Manager, never in a file. The settings are in
+Passwords and Microsoft sign-ins (refresh tokens) are kept in the Windows Credential Manager, never
+in a file. The settings are in
 `%APPDATA%\MailALM`, the cache in `%LOCALAPPDATA%\MailALM\cache` (not encrypted: BitLocker and the
 Windows session protect it).
 

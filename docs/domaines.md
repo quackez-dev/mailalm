@@ -20,7 +20,23 @@ mise à jour automatique, pas de rapport de plantage, pas d'autoconfiguration pa
 - La vérification des certificats utilise les autorités de Mozilla (incluses dans MailALM) et celles de Windows,
   moins les certificats que Windows désigne comme non fiables (magasin `Disallowed`).
 
+## Phase 3 : comptes Hotmail et Outlook.com
+
+| Domaine | Port | Protocole | Quand |
+|---|---|---|---|
+| `login.microsoftonline.com` | 443 (TLS) | HTTPS (OAuth 2, PKCE) | Connexion à Microsoft : échange du code contre les jetons, puis renouvellement du jeton d'accès (environ toutes les heures) |
+| `graph.microsoft.com` | 443 (TLS) | HTTPS (Microsoft Graph v1.0) | Compte Outlook : dossiers, messages, changements, envoi, blocage d'expéditeurs |
+| `localhost` (ce PC) | port libre choisi au moment de la connexion | HTTP | Le navigateur y renvoie le code de connexion ; MailALM n'écoute que sur ce PC, et seulement pendant la connexion |
+
+- La page de connexion s'ouvre dans le **navigateur par défaut** : le mot de passe Microsoft est tapé là, jamais
+  dans MailALM. Ce que le navigateur charge sur cette page relève de Microsoft, pas de MailALM.
+- MailALM garde seulement le jeton de renouvellement, dans le Gestionnaire d'identifiants de Windows. Le jeton
+  d'accès reste en mémoire.
+- Les mêmes vérifications de certificat que pour IMAP s'appliquent à ces connexions.
+- MailALM ne suit aucune redirection HTTP, et ne suit un lien de pagination de Graph que s'il pointe vers
+  `https://graph.microsoft.com/`.
+
 ## Phases suivantes
 
-Microsoft Graph et la connexion Microsoft (phase 3), les API Google et la connexion Google (phase 4) : la liste
-sera complétée à leur arrivée et validée par l'utilisateur.
+Les API Google et la connexion Google (phase 4) : la liste sera complétée à leur arrivée et validée par
+l'utilisateur.

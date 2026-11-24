@@ -2161,9 +2161,11 @@ dependencies = [
  "lettre",
  "log",
  "mailalm-model",
+ "ring",
  "rustls",
  "rustls-native-certs",
  "schannel",
+ "serde_json",
  "thiserror 2.0.21",
  "webpki-roots",
 ]

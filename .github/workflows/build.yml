@@ -5,8 +5,13 @@
 #   audited commits of Cargo.lock. Every github.com/storytold/ URL is rewritten to
 #   github.com/quackez-dev/, so nothing is fetched from storytold.
 # - crates.io: Cargo.lock checksums (`--locked`).
-# - Actions: only GitHub's own, pinned by commit SHA. The only secret is MIRRORS_TOKEN (read-only on
-#   the mirrors), removed before any build script runs. Tests and build run offline.
+# - Actions: only GitHub's own, pinned by commit SHA. Secrets:
+#   - MIRRORS_TOKEN (read-only on the mirrors), removed before any build script runs;
+#   - MAILALM_MICROSOFT_CLIENT_ID, the public id of MailALM's Microsoft app registration
+#     (docs/oauth-microsoft.md), given to the release build step alone and compiled in. It is not a
+#     credential (it can be read from the binary); it is kept out of the public code (PLAN.md, Q5).
+#   No pull_request trigger: a run from someone else's code never sees either.
+# - Tests and build run offline.
 # - Windows only for now (PLAN.md, decision Q2).
 # - A push to main runs the tests and the release build. A `crafttools-v*` tag or a manual run also
 #   packages the portable zip with its SHA256SUMS as a one-day artifact: this repository is public,
@@ -79,7 +84,10 @@ jobs:
       - name: Build (offline)
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --release --locked --offline -p mailalm --target x86_64-pc-windows-msvc
+          MAILALM_MICROSOFT_CLIENT_ID: ${{ secrets.MAILALM_MICROSOFT_CLIENT_ID }}
+        run: |
+          if [ -z "$MAILALM_MICROSOFT_CLIENT_ID" ]; then echo "::warning::MAILALM_MICROSOFT_CLIENT_ID is not set: this build cannot sign in to Microsoft"; fi
+          cargo build --release --locked --offline -p mailalm --target x86_64-pc-windows-msvc
 
       - name: Package (portable zip, unsigned)
         if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
