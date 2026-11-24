@@ -130,8 +130,10 @@ Règles de reprise :
   considère pas comme confidentiels, et le seul risque est l'usage du quota par un tiers.
 - Le workflow ne donne jamais ces secrets à une exécution venue d'une pull request.
 - Google : tant que l'application n'est pas vérifiée par Google, l'écran « application non validée » s'affiche à
-  la première connexion, et le nombre d'utilisateurs est limité (environ 100, à confirmer à la mise en place). Le
-  projet doit être en mode « production » : en mode « test », les jetons expirent après 7 jours.
+  la première connexion, et le projet est limité à 100 nouveaux comptes pour toute sa vie. Le projet doit être de
+  type « External », en mode « production » : en mode « test », les jetons expirent après 7 jours. Le mode
+  « Personal » de Google (sans écran ni limite) est écarté : il n'accepte que le compte qui crée le projet, et
+  l'utilisateur a plusieurs comptes Gmail (décision du 2026-11-24).
 
 ### 4.3 Séparation des comptes (décision Q10)
 
