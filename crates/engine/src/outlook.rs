@@ -483,8 +483,8 @@ impl Outlook {
             }
         }
         self.save_folder(&path, &mut summaries, &ids);
-        if let Some(d) = done_link {
-            let _ = self.store.save_folder_state(&FolderState { path: path.clone(), uidvalidity: 1, uidnext: ids.next, delta: Some(d) });
+        if let Some(d) = &done_link {
+            let _ = self.store.save_folder_state(&FolderState { path: path.clone(), uidvalidity: 1, uidnext: ids.next, delta: Some(d.clone()) });
         } else if full {
             // An unfinished first pass starts over next time; the numbers given so far are kept.
             let _ = self.store.save_folder_state(&FolderState { path: path.clone(), uidvalidity: 1, uidnext: ids.next, delta: None });
