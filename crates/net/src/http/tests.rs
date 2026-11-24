@@ -101,7 +101,8 @@ fn urls() {
     assert_eq!(Url::parse("http://h:8080").unwrap().path, "/");
     assert_eq!(Url::parse("http://localhost:8080?code=a").unwrap().path, "/?code=a");
     assert_eq!(Url::parse("http://[::1]:99/x").unwrap().host, "::1");
-    assert_eq!(Url::parse("https://h/a b\u{85}").unwrap().path, "/a%20b%C2%85");
+    // Inside the path: at its end, `trim` takes U+0085 (white space) off first.
+    assert_eq!(Url::parse("https://h/a b\u{85}c").unwrap().path, "/a%20b%C2%85c");
     // Graph's links name folders this way.
     assert_eq!(Url::parse("https://graph.microsoft.com/v1.0/me/mailfolders('AQ=')/messages/delta?$skiptoken=G").unwrap().host, "graph.microsoft.com");
     for bad in ["ftp://h/", "http://", "http://user@h/", "http://h:0/", "http://h:x/", "javascript:alert(1)", "http://h h/", "https://h\r\nX: y/"] {
