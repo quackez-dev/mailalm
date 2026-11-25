@@ -80,7 +80,7 @@ Une **nouvelle application**, avec sa propre architecture, sa propre interface e
 | IMAP, SMTP, OAuth (PKCE), Microsoft Graph courriel | MailCraft `net`, relu et réduit (sans autoconfig vers des tiers, sans découverte DAV automatique, sans updater) |
 | API Gmail, Google Agenda, Meet, Teams, Graph agenda, tâches, contacts, `markAsJunk` | **nouveau** |
 | Cache local | **nouveau**, inspiré de MailCraft `store` |
-| Moteur de rédaction | WordCraft `doc`, `layout`, `formats` (export HTML) |
+| Moteur de rédaction | **nouveau** (`crates/compose`) : décision du 2026-11-25, le moteur de WordCraft (environ 220 000 lignes avec ses dépendances) est écarté |
 | Correcteur | Antidote (section 9), craft-proof en secours |
 | Interface | **nouvelle**, d'après le design validé |
 | MCP | **nouveau**, sur le modèle de WordCraft `mcp` et `control-key` |
@@ -247,8 +247,9 @@ clic.
 
 ## 8. Rédaction
 
-- Éditeur riche sur le moteur de WordCraft : gras, italique, listes, tableaux, liens, images en ligne, citations.
-  Envoi en HTML, avec une partie texte générée. Mode texte brut au choix.
+- Éditeur riche écrit pour MailALM sur egui (décision du 2026-11-25, au lieu du moteur de WordCraft) : gras,
+  italique, souligné, listes, citations, titres, liens, couleur, images en ligne. Envoi en HTML, avec une partie
+  texte générée. Mode texte brut au choix.
 - **Modèles, réponses rapides et signatures par compte** (C4).
 - Pièces jointes par glisser-déposer ou parcourir. Avertissement si le texte parle d'une pièce jointe absente.
   Taille maximale par fournisseur affichée avant l'envoi.
@@ -458,6 +459,7 @@ mailalm/
 | Q11 | Langue | Anglais par défaut, français en option |
 | Q12 | Droits MCP | Tout, avec confirmation dans MailALM des actions sensibles ; réglable par compte |
 | Q13 | Suggestions | Retenues : C1 à C7, S4, A1, A2, A3, K1, M2. Les autres vont dans [IDEES.md](IDEES.md) |
+| Q15 | Éditeur (2026-11-25) | Éditeur riche écrit pour MailALM ; pas le moteur de WordCraft |
 | Q14 | Domaines | `@hotmail.com`, `@outlook.com`, `@live.ca`, `@bell.net`, `@videotron.ca` (et `@gmail.com`) |
 
 ## 16. Étapes
