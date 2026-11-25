@@ -59,7 +59,7 @@ pub fn field(ui: &mut Ui, id: Id, text: &mut String, width: f32, hint: &str, sug
         // The cursor at the end, for the next address.
         if let Some(mut state) = egui::text_edit::TextEditState::load(&ctx, id) {
             let end = egui::text::CCursor::new(text.chars().count());
-            state.cursor.set_char_range(Some(egui::CCursorRange::one(end)));
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::one(end)));
             state.store(&ctx, id);
         }
     }
