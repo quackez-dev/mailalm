@@ -93,7 +93,7 @@ impl Review {
             poll_preview(ctx, r, &self.info.name);
         }
         let mut close = false;
-        let modal = egui::Modal::new(Id::new("mailalm-attachment-review")).show(ctx, |ui| {
+        let modal = egui::Modal::new(Id::unique("mailalm-attachment-review")).show(ctx, |ui| {
             ui.set_width(680.0);
             self.header(ui);
             ui.add_space(10.0);

@@ -280,7 +280,7 @@ impl Compose {
             });
             if hovering {
                 let screen = ui.ctx().content_rect();
-                let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new(("mailalm-compose-drop", self.id))));
+                let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique(("mailalm-compose-drop", self.id))));
                 painter.rect_filled(screen, 0.0, egui::Color32::from_black_alpha(150));
                 painter.text(screen.center(), egui::Align2::CENTER_CENTER, "Drop to attach", egui::FontId::proportional(22.0), t::TEXT);
             }
