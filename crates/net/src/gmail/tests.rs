@@ -163,7 +163,7 @@ fn metadata_makes_a_summary() {
 
     let seen = seen.join().unwrap();
     assert_eq!(seen.len(), 5);
-    let fields = "metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=Content-Type";
+    let fields = "metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=In-Reply-To&metadataHeaders=References&metadataHeaders=Content-Type";
     assert!(seen[0].starts_with(&format!("GET /gmail/v1/users/me/messages/18c1?format=metadata&{fields} HTTP/1.1\r\n")), "{}", seen[0]);
 }
 

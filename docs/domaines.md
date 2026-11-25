@@ -101,6 +101,41 @@ Aucun nouveau domaine.
 - Le texte envoyé (zones à corriger, objet, corps et destinataires pour l'Anti-Oups!) va à l'Antidote installé sur
   le PC. **Aucun texte ne sort du PC** par MailALM ; ce qu'Antidote fait ensuite relève d'Antidote.
 
+## Phase 8 : règles, report, recherche, désabonnement
+
+| Domaine | Port | Protocole | Quand |
+|---|---|---|---|
+| `graph.microsoft.com` | 443 (TLS) | HTTPS (Microsoft Graph v1.0) | Compte Outlook : règles de la boîte de réception (`/me/mailFolders/inbox/messageRules`), recherche sur le serveur (`$search`), création du dossier `MailALM/Snoozed` |
+| `gmail.googleapis.com` | 443 (TLS) | HTTPS (API Gmail v1) | Compte Gmail : filtres (`settings/filters`), recherche sur le serveur (`messages?q=`), création du libellé `MailALM/Snoozed` |
+| serveurs IMAP des comptes (déjà listés) | ceux du compte | IMAP | Recherche sur le serveur (`UID SEARCH`), création du dossier `MailALM/Snoozed` (`CREATE`) |
+| **domaine choisi par l'expéditeur d'une liste de diffusion** | 443 (TLS) | HTTPS, une requête `POST` | Désabonnement en un clic (RFC 8058), **seulement après confirmation de l'utilisateur**, pour ce message-là |
+
+- **Désabonnement en un clic : un domaine quelconque.** C'est le seul cas où MailALM contacte un domaine qu'il
+  n'a pas choisi : celui que l'en-tête `List-Unsubscribe` du message désigne. Garde-fous :
+  - rien ne part sans geste de l'utilisateur ; la fenêtre de confirmation montre le domaine contacté ;
+  - l'adresse est relue dans le message en cache au moment de l'envoi, jamais reçue de l'interface ;
+  - `https://` seulement, en TLS vérifié comme les autres connexions ; une adresse IP, `localhost` ou un nom du
+    réseau local (`.local`, `.lan`, `.internal`, `.home.arpa`, nom sans point) est refusé avant tout envoi ;
+  - le corps est exactement `List-Unsubscribe=One-Click` (RFC 8058) : ni cookie (MailALM n'en garde aucun), ni
+    jeton, ni adresse de l'utilisateur ; la requête part une seule fois ; une redirection n'est pas suivie (elle
+    est signalée comme un échec) ; la réponse est lue jusqu'à 64 Ko et seul son statut est gardé ;
+  - le site apprend l'adresse IP du PC, et que l'adresse de courriel est lue (l'adresse de désabonnement contient
+    souvent un identifiant). MailALM ne vérifie pas que la signature DKIM couvre ces en-têtes, comme la RFC 8058
+    le demande aux expéditeurs : la confirmation est le garde-fou.
+- **Désabonnement par courriel** (`mailto:`) : un message part du compte, par son serveur d'envoi habituel (SMTP,
+  Graph ou Gmail), vers l'adresse que la liste donne, avec l'objet et le texte qu'elle demande (plafonnés). MailALM
+  ne contacte aucun nouveau domaine lui-même.
+- **Page de désabonnement** (`https://` ou `http://`) : l'interface l'ouvre dans le navigateur après confirmation,
+  comme tout lien. MailALM ne la charge pas.
+- **Règles** : celles du serveur passent par Graph (permission `MailboxSettings.ReadWrite`, déjà demandée) et par
+  les filtres Gmail (`gmail.settings.basic`, déjà demandée). Un filtre Gmail qui transfère exige une adresse de
+  transfert déjà vérifiée dans Gmail. Les règles de MailALM tournent sur le PC, sur le cache, sans réseau de plus
+  que les changements qu'elles font (déplacer, marquer). Aucune règle ne lance de programme.
+- **Report et suivi** : aucun nouveau domaine. Le dossier `MailALM/Snoozed` est créé une fois sur le serveur du
+  compte ; le retour dans la boîte de réception est un déplacement ordinaire.
+- **Recherche sur le serveur** : seulement quand l'utilisateur la demande ; les mots tapés partent au serveur du
+  compte cherché, nettoyés de ce qui changerait la requête (guillemets, opérateurs, caractères de contrôle).
+
 ## Phase 9 : serveur MCP
 
 | Adresse | Port | Protocole | Quand |

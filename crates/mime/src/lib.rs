@@ -22,8 +22,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mail_builder::mime::MimePart;
-use mail_parser::{AddressList, MessagePart, MessageParser, PartKind};
+use mail_parser::{AddressList, Message, MessagePart, MessageParser, PartKind};
 use mailalm_model::{Flags, Person, Summary};
+
+mod unsubscribe;
+
+use unsubscribe::unsubscribe_of;
+pub use unsubscribe::{Mailto, Unsubscribe, parse_unsubscribe};
 
 /// The most HTML converted to text: a larger body is cut (with a note) before conversion, which
 /// keeps a hostile message from holding the reading pane.
@@ -66,6 +71,8 @@ pub struct Parsed {
     pub date: Option<i64>,
     /// Without angle brackets.
     pub message_id: String,
+    /// The message it answers (`In-Reply-To`), without angle brackets; empty without one.
+    pub in_reply_to: String,
     pub references: Vec<String>,
     /// The body as text.
     pub text: String,
@@ -75,6 +82,9 @@ pub struct Parsed {
     /// The value of the first (topmost) `Authentication-Results` header: the sender checks the
     /// receiving provider made (read by `mailalm_safety::authentication`).
     pub authentication_results: Option<String>,
+    /// How to leave the mailing list the message came from (`List-Unsubscribe`, RFC 2369 and
+    /// 8058), when it says.
+    pub unsubscribe: Option<Unsubscribe>,
 }
 
 /// One attachment's content, decoded for a review the user asked for.
@@ -106,7 +116,9 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
         subject: clean_line(m.subject().unwrap_or("")),
         date: m.date().map(|d| d.to_timestamp()),
         message_id: m.message_id().map(clean_id).unwrap_or_default(),
-        references: m.references().map(|l| l.iter().map(clean_id).collect()).unwrap_or_default(),
+        in_reply_to: in_reply_to(&m),
+        references: references(&m),
+        unsubscribe: unsubscribe_of(&m),
         authentication_results: m
             .headers()
             .all("Authentication-Results")
@@ -187,6 +199,8 @@ pub fn summary_from_header(uid: u32, header: &[u8], flags: Flags, size: u32, int
             s.date = d.to_timestamp();
         }
         s.message_id = m.message_id().map(clean_id).unwrap_or_default();
+        s.in_reply_to = in_reply_to(&m);
+        s.references = mailalm_model::mail::capped_references(references(&m));
         s.has_attachments = m.content_type().is_some_and(|c| {
             c.ctype().eq_ignore_ascii_case("multipart") && c.subtype().is_some_and(|sub| sub.eq_ignore_ascii_case("mixed"))
         });
@@ -199,6 +213,23 @@ pub fn summary_from_header(uid: u32, header: &[u8], flags: Flags, size: u32, int
 pub fn complete_summary(s: &mut Summary, parsed: &Parsed) {
     s.preview = preview(&parsed.text);
     s.has_attachments = !parsed.attachments.is_empty();
+    // Graph's listings don't give them: the whole message does.
+    if s.in_reply_to.is_empty() {
+        s.in_reply_to = parsed.in_reply_to.clone();
+    }
+    if s.references.is_empty() {
+        s.references = mailalm_model::mail::capped_references(parsed.references.clone());
+    }
+}
+
+/// The first identifier of `In-Reply-To`, cleaned, without angle brackets.
+fn in_reply_to(m: &Message<'_>) -> String {
+    m.in_reply_to().and_then(|l| l.iter().next().map(clean_id)).unwrap_or_default()
+}
+
+/// The identifiers of `References`, cleaned, without angle brackets (at most 1000 looked at).
+fn references(m: &Message<'_>) -> Vec<String> {
+    m.references().map(|l| l.iter().take(1000).map(clean_id).filter(|r| !r.is_empty()).collect()).unwrap_or_default()
 }
 
 /// The first words of a text, on one line.

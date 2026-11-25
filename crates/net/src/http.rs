@@ -1,5 +1,5 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/http.rs. MIT OR Apache-2.0.
-// Changed: https only (plain http to this computer in tests alone); no redirects followed, no event streams, no downloads into files, no "internet only" connections; one kept connection opened again once when the server had closed it, never for a request that may have been acted on; a percent-encoder of our own; interim (1xx) answers skipped.
+// Changed: https only (plain http to this computer in tests alone); no redirects followed, no event streams, no downloads into files, no "internet only" connections; one kept connection opened again once when the server had closed it, never for a request that may have been acted on; a percent-encoder of our own; interim (1xx) answers skipped; RFC 8058's one-click unsubscription (MailALM's own, phase 8).
 
 //! A small blocking HTTP/1.1 client (RFC 9112) for the web services MailALM talks to: Microsoft's
 //! and Google's sign-in services (OAuth), Microsoft Graph and the Gmail API.
@@ -468,6 +468,56 @@ fn read_answer<S: Read>(s: &mut S, max: usize, head_only: bool) -> Result<(Respo
         return Ok((resp, cut));
     }
     Err(NetError::Protocol("too many interim answers".into()))
+}
+
+/// The body of a one-click unsubscription (RFC 8058, section 3.1), and the most of the answer read.
+const ONE_CLICK_BODY: &[u8] = b"List-Unsubscribe=One-Click";
+const MAX_ONE_CLICK_ANSWER: usize = 64 << 10;
+/// The longest address a one-click unsubscription goes to.
+const MAX_ONE_CLICK_URL: usize = 2048;
+
+/// RFC 8058's one-click unsubscription: `POST` of exactly `List-Unsubscribe=One-Click`
+/// (`application/x-www-form-urlencoded`) to the `https://` address a message's
+/// `List-Unsubscribe` gave. **Only ever called after the user confirmed it**, for that message:
+/// the address is any domain a sender chose (docs/domaines.md).
+///
+/// What goes out is that body and the usual headers, nothing else: no cookie (MailALM keeps none),
+/// no token, no address of the user's. The request goes on a connection of its own and is never
+/// sent again; a redirect is not followed (it is an answer: the error says to use the browser);
+/// the answer is read up to 64 KB and only its status kept. Plain `http://`, an IP address, and
+/// `localhost` or a `.local` name are refused before anything is sent (a message can't make
+/// MailALM post to a device of the local network). The status is returned when it is a success.
+pub fn one_click_unsubscribe(url: &str) -> Result<u16> {
+    if url.len() > MAX_ONE_CLICK_URL || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(NetError::Invalid("not an unsubscribe address MailALM uses".into()));
+    }
+    let u = Url::parse(url)?;
+    if !u.https && !cfg!(test) {
+        return Err(NetError::Invalid("a one-click unsubscription goes over https only".into()));
+    }
+    if !cfg!(test) && local_host(&u.host) {
+        return Err(NetError::Invalid("a one-click unsubscription never goes to this computer or its network".into()));
+    }
+    let req = Request::post(url, "application/x-www-form-urlencoded", ONE_CLICK_BODY.to_vec(), MAX_ONE_CLICK_ANSWER);
+    let resp = send(&req)?;
+    match resp.status {
+        200..=299 => Ok(resp.status),
+        300..=399 => Err(NetError::Server(format!(
+            "the list answered with a redirect (HTTP {}), which MailALM doesn't follow: use its web page instead",
+            resp.status
+        ))),
+        s => Err(NetError::Server(format!("the list refused the unsubscription (HTTP {s})"))),
+    }
+}
+
+/// Whether a host is an IP address, `localhost`, or a name of the local network (`.local`,
+/// `.localhost`, `.internal`, `.lan`, `.home.arpa`): never one a list's server has.
+fn local_host(host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    h.parse::<std::net::IpAddr>().is_ok()
+        || h == "localhost"
+        || !h.contains('.')
+        || [".local", ".localhost", ".internal", ".lan", ".home.arpa"].iter().any(|s| h.ends_with(s))
 }
 
 /// `application/x-www-form-urlencoded` (for OAuth token requests).

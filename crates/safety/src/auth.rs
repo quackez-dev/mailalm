@@ -61,12 +61,56 @@ pub struct Authentication {
     pub spf: Check,
     pub dkim: Check,
     pub dmarc: Check,
+    /// The domain DMARC was checked for (its `header.from`), lowercase, when the header says.
+    pub dmarc_domain: Option<String>,
+    /// What the receiving provider did about a DMARC failure (`action=`, or `policy.dmarc=`:
+    /// `quarantine`, `reject`, `none`…), when the header says.
+    pub dmarc_action: Option<String>,
 }
 
 impl Default for Authentication {
     fn default() -> Self {
-        Authentication { found: false, checked_by: None, spf: Check::missing(), dkim: Check::missing(), dmarc: Check::missing() }
+        Authentication {
+            found: false,
+            checked_by: None,
+            spf: Check::missing(),
+            dkim: Check::missing(),
+            dmarc: Check::missing(),
+            dmarc_domain: None,
+            dmarc_action: None,
+        }
     }
+}
+
+/// The reading pane's alert for a sender that fails DMARC (PLAN.md, section 10.2): the domain of
+/// the From address isn't the one that sent the message, by its own published rules.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DmarcAlert {
+    /// The From address's domain, lowercase.
+    pub domain: String,
+    /// The word the header used (`fail`…).
+    pub result: String,
+    /// What the provider did about it, when the header says.
+    pub action: Option<String>,
+    /// The server that judged it, when the header names it.
+    pub checked_by: Option<String>,
+}
+
+/// Whether the reading pane shows the DMARC alert for a message from `from_address`: the
+/// provider's DMARC check failed, for the From address's domain (or for no domain said). A
+/// result about another domain proves nothing about this sender, and gives no alert.
+pub fn dmarc_alert(auth: &Authentication, from_address: &str) -> Option<DmarcAlert> {
+    if auth.dmarc.verdict != Verdict::Fail {
+        return None;
+    }
+    let domain = from_address.trim().rsplit_once('@').map(|(_, d)| d.trim_end_matches('>').trim().to_ascii_lowercase()).unwrap_or_default();
+    if domain.is_empty() {
+        return None;
+    }
+    if auth.dmarc_domain.as_deref().is_some_and(|d| d != domain) {
+        return None;
+    }
+    Some(DmarcAlert { domain, result: auth.dmarc.word.clone(), action: auth.dmarc_action.clone(), checked_by: auth.checked_by.clone() })
 }
 
 /// Reads the value of the message's first `Authentication-Results` header (`None`: it has none).
@@ -96,12 +140,28 @@ pub fn authentication(header: Option<&str>) -> Authentication {
         let check = Check::of(result.trim().trim_matches('"'));
         match method.as_str() {
             "spf" if a.spf.verdict == Verdict::Missing => a.spf = check,
-            "dmarc" if a.dmarc.verdict == Verdict::Missing => a.dmarc = check,
+            "dmarc" if a.dmarc.verdict == Verdict::Missing => {
+                a.dmarc = check;
+                a.dmarc_domain = property(part, "header.from").map(|d| d.to_ascii_lowercase());
+                a.dmarc_action = property(part, "action").or_else(|| property(part, "policy.dmarc")).map(|v| v.to_ascii_lowercase());
+            }
             "dkim" if a.dkim.verdict == Verdict::Missing || (check.verdict == Verdict::Pass && a.dkim.verdict != Verdict::Pass) => a.dkim = check,
             _ => {}
         }
     }
     a
+}
+
+/// A result's property (`header.from=example.com`), its value cut to a domain's characters.
+fn property(part: &str, name: &str) -> Option<String> {
+    part.split_whitespace().skip(1).find_map(|t| {
+        let (k, v) = t.split_once('=')?;
+        if !k.eq_ignore_ascii_case(name) {
+            return None;
+        }
+        let v: String = v.trim_matches('"').chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')).take(253).collect();
+        (!v.is_empty()).then_some(v)
+    })
 }
 
 /// The header without its comments (`(…)`, nested, outside quoted strings), each replaced by a

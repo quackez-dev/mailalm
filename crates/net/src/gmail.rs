@@ -19,6 +19,7 @@ use crate::http::{self, Agent, Request, Response};
 use crate::{NetError, Result, clip};
 
 mod convert;
+mod rules;
 
 #[cfg(test)]
 mod tests;
@@ -185,6 +186,12 @@ impl GmailClient {
         if labels.iter().any(|l| matches!(*l, "SPAM" | "TRASH")) {
             query.push_str("&includeSpamTrash=true");
         }
+        self.list(&query, limit)
+    }
+
+    /// The ids of a listing (`query`: its parameters after the page size, each starting with
+    /// `&`), newest first, at most `limit`, through as many pages as that takes.
+    fn list(&mut self, query: &str, limit: usize) -> Result<Vec<String>> {
         let mut out: Vec<String> = Vec::new();
         // A message that moved up while the pages were read comes twice: kept once.
         let mut taken: HashSet<String> = HashSet::new();

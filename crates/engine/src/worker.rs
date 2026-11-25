@@ -10,8 +10,9 @@ use mailalm_net::{ImapSession, Mailbox, NetError};
 use mailalm_store::{FolderState, Store};
 
 use crate::local::{self, sort_newest_first};
-use crate::{Command, Event, Link, Start, Wake, Zones, secrets};
+use crate::{Command, Event, Link, Start, Wake, Zones, find, later, rules, secrets, unsubscribe};
 
+mod features;
 mod pim;
 
 /// How often the Inbox and the open folder are checked for new mail.
@@ -56,9 +57,12 @@ pub fn run(account: Account, start: Start) {
     };
     w.show_cache();
     w.pim_show_cache();
+    later::show(&w);
     w.sync_all(&commands);
+    later::tick(&mut w, &commands);
     let mut last_check = Instant::now();
     let mut last_full = Instant::now();
+    let mut last_later = Instant::now();
     while !w.stop {
         let next = w.queued.pop();
         let cmd = match next {
@@ -83,6 +87,11 @@ pub fn run(account: Account, start: Start) {
                 }
             }
             Err(RecvTimeoutError::Disconnected) => break,
+        }
+        // Snoozed messages and follow-ups whose time came.
+        if !w.stop && last_later.elapsed() >= later::EVERY {
+            last_later = Instant::now();
+            later::tick(&mut w, &commands);
         }
     }
     if let Some(s) = w.session.take() {
@@ -172,8 +181,16 @@ impl Worker {
                 self.drop_session();
                 self.sync_all(commands);
             }
-            Command::Senders(_) => self.error("Blocking a sender on an IMAP account arrives with the rules (phase 8)."),
+            Command::Senders(_) => self.error("An IMAP account's server keeps no blocked senders MailALM can reach: make a MailALM rule that moves the sender's mail to Junk."),
             Command::Pim(p) => self.pim(p),
+            Command::Rules(c) => rules::handle(self, c),
+            Command::Later(c) => later::handle(self, c, commands),
+            Command::Find { id, query, folders, server } => find::handle(self, id, &query, &folders, server),
+            Command::Unsubscribe { folder, uid, how } => {
+                if let Some(message) = unsubscribe::handle(&*self, &folder, uid, how) {
+                    self.send_message(message, commands);
+                }
+            }
             Command::Stop => self.stop = true,
         }
     }
@@ -299,8 +316,28 @@ impl Worker {
     // ---- Sync ----
 
     fn sync_all(&mut self, commands: &Receiver<Command>) {
-        if self.connect().is_none() {
+        if !self.read_folder_list() {
             return;
+        }
+
+        // The Inbox, then the folder the user is looking at, then the others.
+        let mut order: Vec<Folder> = self.folders.clone();
+        let viewed = self.viewed.clone();
+        order.sort_by_key(|f| (f.role != FolderRole::Inbox, Some(&f.path) != viewed.as_ref()));
+        for f in order {
+            if self.stop || self.session.is_none() && self.connect().is_none() {
+                break;
+            }
+            self.sync_folder(&f, commands);
+        }
+        self.activity(None);
+    }
+
+    /// Reads the folder list again (counts kept), keeps and shows it. `false` when it couldn't be
+    /// read (said).
+    fn read_folder_list(&mut self) -> bool {
+        if self.connect().is_none() {
+            return false;
         }
         self.activity(Some("Reading the folder list…".to_owned()));
         let listed = match self.session.as_mut().map(ImapSession::folders) {
@@ -309,9 +346,9 @@ impl Worker {
                 self.error(format!("The folder list could not be read: {}", describe(&e)));
                 self.drop_session();
                 self.activity(None);
-                return;
+                return false;
             }
-            None => return,
+            None => return false,
         };
         let mut folders = listed;
         // Keeps the counts known so far until each folder is synced again.
@@ -326,18 +363,7 @@ impl Worker {
         let _ = self.store.save_folders(&self.folders);
         let _ = self.store.forget_folders_except(&self.folders);
         self.emit(Event::Folders { account: self.id, folders: self.folders.clone() });
-
-        // The Inbox, then the folder the user is looking at, then the others.
-        let mut order: Vec<Folder> = self.folders.clone();
-        let viewed = self.viewed.clone();
-        order.sort_by_key(|f| (f.role != FolderRole::Inbox, Some(&f.path) != viewed.as_ref()));
-        for f in order {
-            if self.stop || self.session.is_none() && self.connect().is_none() {
-                break;
-            }
-            self.sync_folder(&f, commands);
-        }
-        self.activity(None);
+        true
     }
 
     /// The Inbox and the open folder, between two full syncs.
@@ -469,6 +495,9 @@ impl Worker {
 
         self.prefetch(folder, &mut summaries, commands);
         self.flush_pending();
+        if folder.role == FolderRole::Inbox {
+            rules::run_new(self, &path);
+        }
     }
 
     /// What happened to the folder while the sync was serving the user: changes made in the cache
@@ -708,7 +737,7 @@ impl Worker {
     // ---- Search ----
 
     fn search(&mut self, id: u64, query: &str) {
-        let hits = local::search(&self.store, &self.folders, query);
+        let hits = local::search(&self.store, &self.folders, query, (self.account.name.as_str(), self.account.address.as_str()));
         self.emit(Event::SearchResults { account: self.id, id, hits });
     }
 

@@ -12,7 +12,8 @@ use serde_json::{Map, Value};
 use super::{Filter, FilterAction, Label, LabelKind};
 
 /// The header fields asked for with a message's metadata: what the message list shows.
-pub(super) const HEADERS: [&str; 7] = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "Content-Type"];
+/// `In-Reply-To` and `References` follow the thread, for the follow-ups.
+pub(super) const HEADERS: [&str; 9] = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Content-Type"];
 
 /// Longest message or label id taken (Gmail's are 16 hex digits, `INBOX`, `Label_123`…).
 const MAX_ID: usize = 256;
@@ -139,7 +140,22 @@ pub(super) fn summary_of(m: &Value, labels: &[String]) -> Summary {
     s.has_attachments |= mime_type.trim().eq_ignore_ascii_case("multipart/mixed");
     let snippet: String = m.get("snippet").and_then(Value::as_str).unwrap_or_default().chars().take(MAX_SNIPPET).collect();
     s.preview = mailalm_mime::preview(&mailalm_mime::clean_line(&entities(&snippet)));
+    s.thread = m.get("threadId").and_then(Value::as_str).filter(|t| id_ok(t)).map(str::to_owned).unwrap_or_default();
+    s.categories = labels.iter().filter_map(|l| category_name(l)).map(str::to_owned).collect();
     s
+}
+
+/// The name of an Inbox category's label (`CATEGORY_PROMOTIONS` is Promotions), as the search's
+/// `category:` and the folder pane name them.
+pub(super) fn category_name(label: &str) -> Option<&'static str> {
+    match label {
+        "CATEGORY_PERSONAL" => Some("Primary"),
+        "CATEGORY_SOCIAL" => Some("Social"),
+        "CATEGORY_PROMOTIONS" => Some("Promotions"),
+        "CATEGORY_UPDATES" => Some("Updates"),
+        "CATEGORY_FORUMS" => Some("Forums"),
+        _ => None,
+    }
 }
 
 /// Text with its HTML character references decoded, as Gmail escapes its snippets (`&amp;`,
@@ -190,7 +206,7 @@ fn entity(name: &str) -> Option<char> {
 }
 
 /// Whether a value says nothing: absent in effect (null, false, zero, empty).
-fn says_nothing(v: &Value) -> bool {
+pub(super) fn says_nothing(v: &Value) -> bool {
     match v {
         Value::Null => true,
         Value::Bool(b) => !b,
@@ -202,7 +218,7 @@ fn says_nothing(v: &Value) -> bool {
 }
 
 /// The label ids of an action's list, when it is a short list of strings.
-fn label_list(v: &Value) -> Option<Vec<&str>> {
+pub(super) fn label_list(v: &Value) -> Option<Vec<&str>> {
     let a = v.as_array().filter(|a| a.len() <= 10)?;
     a.iter().map(Value::as_str).collect()
 }

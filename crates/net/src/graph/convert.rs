@@ -1,5 +1,5 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/exchange/graph/flags.rs (`flags`) and crates/net/src/exchange/graph.rs (`address`). MIT OR Apache-2.0.
-// Changed: MailALM's Summary straight from Graph's fields (no header block, no follow-up days, reminders or categories); every string cleaned of controls and invisible characters and clipped; our own ISO 8601 reader.
+// Changed: MailALM's Summary straight from Graph's fields (no header block, no follow-up days or reminders; the conversation and categories kept since phase 8); every string cleaned of controls and invisible characters and clipped; our own ISO 8601 reader.
 
 //! Graph's JSON as MailALM's model: a message's summary, a folder's name, ids. Everything here
 //! came from the server: strings are cleaned (no control, direction or zero-width characters)
@@ -148,6 +148,16 @@ pub(super) fn summary_of(m: &Value) -> Summary {
         preview: preview(str_of(m, "bodyPreview")),
         // Kept without its angle brackets, as the MIME reader keeps it.
         message_id: clean_text(id.trim_start_matches('<').trim_end_matches('>'), 1000),
+        // Graph's listings have no In-Reply-To or References: the whole message gives them
+        // (`complete_summary`); the conversation is the thread meanwhile.
+        in_reply_to: String::new(),
+        references: Vec::new(),
+        thread: Some(str_of(m, "conversationId")).filter(|c| id_ok(c)).map(str::to_owned).unwrap_or_default(),
+        categories: m
+            .get("categories")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().take(50).filter_map(Value::as_str).map(|c| clean_text(c, 255)).filter(|c| !c.is_empty()).collect())
+            .unwrap_or_default(),
     }
 }
 

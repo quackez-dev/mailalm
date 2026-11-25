@@ -12,12 +12,14 @@
 //! - a search covers the focused account by default, every account in the unified view.
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod later;
 pub mod mail;
 pub mod pim;
 pub mod query;
+pub mod rules;
 
 pub use mail::{Change, Flags, Folder, FolderRole, Person, Security, Server, Summary, sort_folders};
-pub use query::Query;
+pub use query::{FolderScope, Query, SavedSearch};
 
 use serde::{Deserialize, Serialize};
 
@@ -175,11 +177,22 @@ pub enum NewMail {
     NoAccount,
 }
 
-/// Which accounts a search covers.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Which accounts a search covers: every account, or those chosen (one: the current account).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchScope {
+    #[default]
     AllAccounts,
     Accounts(Vec<AccountId>),
+}
+
+impl SearchScope {
+    /// Whether the scope covers this account.
+    pub fn covers(&self, id: AccountId) -> bool {
+        match self {
+            SearchScope::AllAccounts => true,
+            SearchScope::Accounts(ids) => ids.contains(&id),
+        }
+    }
 }
 
 /// The configured accounts and what has the focus.

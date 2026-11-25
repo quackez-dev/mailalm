@@ -1,5 +1,5 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/protocols/imap/messages.rs. MIT OR Apache-2.0.
-// Changed: MailALM's API on top (headers, flags and messages fetched in chunks, only the UIDs asked for); flags checked before they go; no search by text, no COPYUID or APPENDUID, no dated APPEND, no MODSEQ.
+// Changed: MailALM's API on top (headers, flags and messages fetched in chunks, only the UIDs asked for); flags checked before they go; no search by text here (imap/search.rs, MailALM's own, uses `searched`), no COPYUID or APPENDUID, no dated APPEND, no MODSEQ.
 
 //! Messages by UID: searched, fetched, flagged, moved, expunged and appended.
 
@@ -17,7 +17,7 @@ const HEADER_CHUNK: usize = 200;
 const FLAG_CHUNK: usize = 500;
 
 /// The UIDs a `UID SEARCH` found, in order, each once.
-fn searched(rs: Vec<Response<'static>>) -> Vec<u32> {
+pub(super) fn searched(rs: Vec<Response<'static>>) -> Vec<u32> {
     let mut out = Vec::new();
     for r in rs {
         if let Response::MailboxData(MailboxDatum::Search(v)) = r {

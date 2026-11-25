@@ -364,6 +364,27 @@ fn outlook_authentication_results_have_no_server_name() {
     assert_eq!(a.spf, Check { verdict: Verdict::Fail, word: "softfail".into() });
     assert_eq!(a.dkim, Check { verdict: Verdict::Missing, word: "none".into() });
     assert_eq!(a.dmarc.verdict, Verdict::Fail);
+    assert_eq!((a.dmarc_domain.as_deref(), a.dmarc_action.as_deref()), (Some("example.com"), Some("quarantine")));
+}
+
+/// The reading pane's DMARC alert: a failure for the From address's domain, or for none said.
+#[test]
+fn dmarc_alerts() {
+    let fail = authentication(Some("mx.google.com; dmarc=fail (p=REJECT sp=REJECT dis=NONE) header.from=Bank.example"));
+    let alert = dmarc_alert(&fail, "security@bank.example").expect("an alert");
+    assert_eq!(alert, DmarcAlert { domain: "bank.example".into(), result: "fail".into(), action: None, checked_by: Some("mx.google.com".into()) });
+    // About another domain: no alert for this sender.
+    assert_eq!(dmarc_alert(&fail, "zoe@studio.example"), None);
+    // Gmail's policy word, and no domain said.
+    let gmail = authentication(Some("mx.google.com; dmarc=fail policy.dmarc=QUARANTINE"));
+    assert_eq!(dmarc_alert(&gmail, "a@x.example").and_then(|a| a.action).as_deref(), Some("quarantine"));
+    // A pass, nothing checked, or no address: no alert.
+    assert_eq!(dmarc_alert(&authentication(Some("mx; dmarc=pass header.from=x.example")), "a@x.example"), None);
+    assert_eq!(dmarc_alert(&authentication(None), "a@x.example"), None);
+    assert_eq!(dmarc_alert(&fail, "no address"), None);
+    // A value with something else in it is cut to a domain's characters.
+    let odd = authentication(Some("mx; dmarc=fail header.from=\"x.example<script>\""));
+    assert_eq!(odd.dmarc_domain.as_deref(), Some("x.examplescript"));
 }
 
 #[test]
