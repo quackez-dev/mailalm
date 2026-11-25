@@ -47,3 +47,24 @@ The phase 6 copies (calendars, recurrences, iCalendar) were audited in `audits/m
 
 The test certificates and keys in `crates/net/src/stream/trust/test_certs.rs` were made up for
 MailCraft's tests; they are compiled into tests only and are used nowhere else.
+
+## Druide's antidote-api-python
+
+MailALM's Antidote bridge (`crates/antidote`) ports to Rust the protocol of **antidote-api-python** 1.1.0, the
+integration API Druide informatique sent for Antidote (<https://github.com/DruideInformatiqueInc/antidote-api-python>),
+under the MIT licence. No Python code is included: the messages, their fields and the conversation were rewritten in
+Rust from it, and every check on what Antidote sends is MailALM's. The package was read and audited before use:
+`audits/mailalm/reprise-antidote.md` in CraftTools.
+
+Druide's copyright notice (from its `LICENSE`):
+
+> © 2026 Druide informatique inc.
+
+Its permission notice is the MIT licence text in MailALM's `LICENSE-MIT`. Each ported file starts with a comment
+naming its origin.
+
+| MailALM file | antidote-api-python 1.1.0 origin | Licence |
+|---|---|---|
+| `crates/antidote/src/protocol.rs` | `messages.py`, `requete_sortante.py`, `requete_entrante.py`, `params.py`, `reponses.py`, `configuration_texteur.py`, `zone_de_texte.py`, `info_style.py`, `style_texte.py`, `type_document.py`, `type_identifiant_cache.py`, the dispatch of `agent_connectix.py` | MIT |
+| `crates/antidote/src/session.rs` | `agent_connectix.py`, `agent_texteur.py` | MIT |
+| `crates/antidote/src/locate.rs` | `recupere_port_websocket.py`, `windows.py` | MIT |

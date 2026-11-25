@@ -87,3 +87,16 @@ Aucun nouveau domaine.
   pagination de Graph ne sont suivis que s'ils pointent vers `https://graph.microsoft.com/`.
 - Comptes IMAP (Vidéotron, Bell) : les invitations partent par courriel (fichier `.ics`), sur les serveurs SMTP
   déjà listés. Aucun autre domaine.
+
+## Phase 7 : Antidote
+
+| Adresse | Port | Protocole | Quand |
+|---|---|---|---|
+| `127.0.0.1`, sinon `::1` (ce PC) | celui que donne `AgentConnectixConsole --api` | WebSocket en clair, local | L'utilisateur ouvre le correcteur, les dictionnaires ou les guides d'Antidote, ou l'Anti-Oups! avant l'envoi |
+
+- Antidote est un **programme local** : MailALM lit son dossier dans le registre
+  (`HKLM\SOFTWARE\Druide informatique inc.\Connectix`, valeur `DossierConnectix`), lance
+  `AgentConnectixConsole.exe --api` (sans fenêtre ni interpréteur de commandes) pour connaître le port, puis se
+  connecte à ce port **sur ce PC seulement**. Le code ne peut pas viser un autre hôte.
+- Le texte envoyé (zones à corriger, objet, corps et destinataires pour l'Anti-Oups!) va à l'Antidote installé sur
+  le PC. **Aucun texte ne sort du PC** par MailALM ; ce qu'Antidote fait ensuite relève d'Antidote.

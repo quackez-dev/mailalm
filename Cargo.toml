@@ -16,6 +16,7 @@ mailalm-net = { path = "crates/net" }
 mailalm-store = { path = "crates/store" }
 mailalm-engine = { path = "crates/engine" }
 mailalm-safety = { path = "crates/safety" }
+mailalm-antidote = { path = "crates/antidote" }
 
 # Every crate below is at the version, and with the features, MailCraft v0.41.0 uses: audited there
 # (audits/mailcraft), and the Cargo.lock is checked against that one (audits/mailalm/README.md).
@@ -37,6 +38,9 @@ rustls-native-certs = "0.8"
 schannel = "0.1"
 # Passwords in the system's keychain (Credential Manager on Windows).
 keyring = "4.2"
+# Where Antidote is installed (HKLM\SOFTWARE\Druide informatique inc.\Connectix): the version in MailCraft's
+# lock (craft-font-catalog, sspi, ipconfig use it); its windows-link, -result, -strings are already in ours.
+windows-registry = "0.6.1"
 # The user's data folders (%APPDATA%, %LOCALAPPDATA%).
 dirs = "7"
 # Local times: the system's zone name and its rules.
