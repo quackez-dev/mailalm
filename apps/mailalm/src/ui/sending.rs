@@ -361,7 +361,10 @@ impl MailApp {
         if let Err(e) = self.sending.schedule.forget(account) {
             self.warn(e);
         }
-        while let Some(id) = self.sending.undo.iter().find(|p| p.item.compose.account == account).map(|p| p.id) {
+        loop {
+            // The id is taken first: the search's borrow ends before the message is taken out.
+            let next = self.sending.undo.iter().find(|p| p.item.compose.account == account).map(|p| p.id);
+            let Some(id) = next else { break };
             let _ = self.sending.undo.take(id);
         }
     }

@@ -26,7 +26,6 @@ pub struct LinkCheck {
     pub warnings: Vec<String>,
 }
 
->>>>
 
 /// The longest address looked at.
 const MAX_URL: usize = 4096;
