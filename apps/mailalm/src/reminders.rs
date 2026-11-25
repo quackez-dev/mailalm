@@ -144,7 +144,7 @@ impl Pim {
             if ui.ctx().input(|i| i.viewport().close_requested()) {
                 closed = true;
             }
-            egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(14, 12))).show(ui, |ui| {
+            egui::CentralPanel::default().frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(14, 12))).show(ui, |ui| {
                 egui::Panel::bottom("mailalm-reminders-all").frame(Frame::new().inner_margin(Margin::symmetric(0, 8))).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ComboBox::from_id_salt("mailalm-reminders-snooze-all").selected_text(SNOOZES.get(r.all).map_or("5 minutes", |s| s.0)).show_ui(ui, |ui| {
@@ -165,7 +165,7 @@ impl Pim {
                 });
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     for d in &r.due {
-                        Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(6).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
+                        Frame::new().fill(t::panel2()).stroke(Stroke::new(1.0, t::line())).corner_radius(6).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 let (bar, _) = ui.allocate_exact_size(vec2(4.0, 34.0), Sense::hover());
@@ -178,7 +178,7 @@ impl Pim {
                                     {
                                         line.push_str(&format!(" · {location}"));
                                     }
-                                    ui.label(RichText::new(line).size(12.0).color(t::MUTED));
+                                    ui.label(RichText::new(line).size(12.0).color(t::muted()));
                                 });
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     if ui.button("Dismiss").clicked() {

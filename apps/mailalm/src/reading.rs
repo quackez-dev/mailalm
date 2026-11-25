@@ -121,7 +121,7 @@ impl MessageView {
         }
         let plan = pictures::plan(&self.remote);
         let mut action = None;
-        Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
+        Frame::new().fill(t::panel2()).stroke(Stroke::new(1.0, t::line())).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 let mut notes: Vec<String> = Vec::new();
                 if plan.trackers > 0 {
@@ -141,9 +141,9 @@ impl MessageView {
                     if self.failed > 0 {
                         text.push_str(&format!(", {} could not be", self.failed));
                     }
-                    ui.label(RichText::new(text).size(12.5).color(t::MUTED));
+                    ui.label(RichText::new(text).size(12.5).color(t::muted()));
                 } else if plan.fetch.is_empty() {
-                    ui.label(RichText::new("Pictures from the internet are blocked.").size(12.5).color(t::MUTED));
+                    ui.label(RichText::new("Pictures from the internet are blocked.").size(12.5).color(t::muted()));
                 } else {
                     ui.label(RichText::new(format!("Pictures from the internet are blocked ({}).", plan.fetch.len())).size(12.5).strong());
                     if ui.small_button("Load for this message").on_hover_text("Fetches them now: their servers see that the message was opened, and from where.").clicked() {
@@ -155,7 +155,7 @@ impl MessageView {
                     }
                 }
                 if !notes.is_empty() {
-                    ui.label(RichText::new(format!("· {}", notes.join(" · "))).size(11.5).color(t::FAINT));
+                    ui.label(RichText::new(format!("· {}", notes.join(" · "))).size(11.5).color(t::faint()));
                 }
             });
         });
@@ -175,9 +175,9 @@ impl MessageView {
                 ui.set_max_width(420.0);
                 ui.label(RichText::new(format!("Goes to {}", check.domain)).strong());
                 for w in &check.warnings {
-                    ui.label(RichText::new(w).size(12.0).color(t::WARN));
+                    ui.label(RichText::new(w).size(12.0).color(t::warn()));
                 }
-                ui.label(RichText::new(clip(hit.link.as_str(), 200)).size(11.0).color(t::FAINT));
+                ui.label(RichText::new(clip(hit.link.as_str(), 200)).size(11.0).color(t::faint()));
             });
         }
         if let Some(hit) = editor.take_clicked_link() {
@@ -196,18 +196,18 @@ impl MessageView {
             ui.heading(if mail { "Write to this address?" } else { "Open this link?" });
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(if mail { "Domain:" } else { "Site:" }).color(t::MUTED));
+                ui.label(RichText::new(if mail { "Domain:" } else { "Site:" }).color(t::muted()));
                 ui.label(RichText::new(&check.domain).strong().size(15.0));
             });
             if let Some(u) = &check.unicode {
-                ui.label(RichText::new(format!("written in the message as {u}")).size(12.0).color(t::FAINT));
+                ui.label(RichText::new(format!("written in the message as {u}")).size(12.0).color(t::faint()));
             }
-            ui.add(egui::Label::new(RichText::new(clip(url, 600)).size(11.5).color(t::FAINT)).selectable(true).wrap());
+            ui.add(egui::Label::new(RichText::new(clip(url, 600)).size(11.5).color(t::faint())).selectable(true).wrap());
             if !check.warnings.is_empty() {
                 ui.add_space(6.0);
-                Frame::new().fill(t::WARN_BG).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
+                Frame::new().fill(t::warn_bg()).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
                     for w in &check.warnings {
-                        ui.label(RichText::new(w).color(t::WARN));
+                        ui.label(RichText::new(w).color(t::warn()));
                     }
                 });
             }
@@ -225,7 +225,7 @@ impl MessageView {
                         }
                     }
                     None => {
-                        ui.label(RichText::new("This link cannot be opened.").color(t::DANGER));
+                        ui.label(RichText::new("This link cannot be opened.").color(t::danger()));
                     }
                 }
                 if ui.button("Cancel").clicked() {

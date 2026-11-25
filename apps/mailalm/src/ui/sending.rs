@@ -265,7 +265,7 @@ impl MailApp {
         let mut edit: Option<u64> = None;
         let mut send_scheduled: Option<u64> = None;
         egui::Area::new(Id::unique("mailalm-send-bar")).order(egui::Order::Foreground).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -36.0)).show(ctx, |ui| {
-            Frame::new().fill(t::RAISED).stroke(Stroke::new(1.0, t::LINE)).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+            Frame::new().fill(t::raised()).stroke(Stroke::new(1.0, t::line())).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
                 for (id, subject, left) in &waiting {
                     ui.horizontal(|ui| {
                         let subject = if subject.trim().is_empty() { "(no subject)" } else { subject.as_str() };
@@ -280,7 +280,7 @@ impl MailApp {
                 }
                 if !scheduled.is_empty() {
                     let _ = ui.menu_button(format!("{} scheduled message{}", scheduled.len(), if scheduled.len() == 1 { "" } else { "s" }), |ui| {
-                        ui.label(RichText::new("Sent by MailALM at their time if it is running, else as soon as it starts.").size(11.5).color(t::FAINT));
+                        ui.label(RichText::new("Sent by MailALM at their time if it is running, else as soon as it starts.").size(11.5).color(t::faint()));
                         for (id, subject, at) in &scheduled {
                             ui.horizontal(|ui| {
                                 ui.label(format!("{} · {}", time::long(*at), if subject.trim().is_empty() { "(no subject)" } else { subject.as_str() }));

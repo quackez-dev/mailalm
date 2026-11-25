@@ -57,7 +57,7 @@ impl Ctx<'_> {
     }
 
     pub fn color(&self, id: AccountId) -> Color32 {
-        self.account(id).map_or(t::FAINT, |a| t::account(a.color))
+        self.account(id).map_or(t::faint(), |a| t::account(a.color))
     }
 
     pub fn name(&self, id: AccountId) -> String {

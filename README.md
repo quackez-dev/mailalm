@@ -3,7 +3,7 @@
 A mail and calendar client for Windows, written in Rust with egui: Outlook.com/Hotmail, Gmail and
 classic IMAP accounts side by side, each kept clearly apart.
 
-**Status: phase 7.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
+**Status: phases 8 to 10, interface written, not yet tested.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
 (Microsoft Graph) and Gmail accounts (Gmail API), the last two signed in on the provider's page in
 the browser: reading, sending, folders and labels, moving, flags, a local cache,
 search in the cache, and changes made while offline. Outlook accounts report junk to Outlook.com;
@@ -41,6 +41,19 @@ messages are shown formatted (converted by MailALM, no web engine): links show t
 and warn about look-alike names before they open; pictures from the internet stay blocked unless
 loaded for a message or approved for a sender, and tracking pictures never load; a sender failing
 DMARC is flagged; a mailing list can be left after a confirmation that says what will happen.
+
+**Phases 8 to 10 (interface)**: the search box has its scope (the current account, accounts
+ticked, or all; the current folder, with its subfolders, or the whole account), can ask the
+servers too (their results come below, "from the server") and keeps searches as search folders.
+Settings, Rules lists each account's rules (on the server for Outlook and Gmail, in MailALM for
+IMAP), with an editor, a preview of the messages a rule would touch, and an explicit confirmation
+for a forwarding. Messages can be snoozed and followed up ("remind me if no reply"). MCP access
+(off by default) answers an agent's calls from the cache, asks before sending, deleting,
+blocking, answering an invitation or changing a rule, shows a triage proposal as a list to tick,
+and keeps a journal. Messages export as .eml or PDF, folders as .mbox; .eml, .mbox (Thunderbird,
+eM Client's export) and Outlook .pst/.ost files import into "On this PC", a folder tree kept on
+this computer only. The theme can be dark, light or as Windows is set; the language setting is
+there, its French texts are not yet.
 
 ## Principles
 

@@ -101,11 +101,11 @@ impl Review {
                 State::Loading => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("Reading the attachment from the message…").color(t::MUTED));
+                        ui.label(RichText::new("Reading the attachment from the message…").color(t::muted()));
                     });
                 }
                 State::Failed(e) => {
-                    ui.label(RichText::new(e.as_str()).color(t::DANGER));
+                    ui.label(RichText::new(e.as_str()).color(t::danger()));
                 }
                 State::Ready(r) => ready(ui, r, &self.info, temp),
             }
@@ -123,7 +123,7 @@ impl Review {
     fn header(&self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
-            crate::icons::paint(ui.painter(), r, crate::icons::Icon::Lock, t::WARN);
+            crate::icons::paint(ui.painter(), r, crate::icons::Icon::Lock, t::warn());
             ui.label(RichText::new("Review an attachment").size(17.0).strong());
         });
         ui.add_space(8.0);
@@ -137,7 +137,7 @@ impl Review {
                 format!("{} <{}>", self.sender.name, self.sender.address)
             };
             fact(ui, "From", &from);
-            ui.label(RichText::new("Sender checks").color(t::MUTED));
+            ui.label(RichText::new("Sender checks").color(t::muted()));
             ui.vertical(|ui| {
                 auth_pills(ui, &self.auth);
                 let by = match (&self.auth.checked_by, self.auth.found) {
@@ -145,7 +145,7 @@ impl Review {
                     (Some(by), true) => format!("As checked by {by}, the server that received the message."),
                     (None, true) => "As checked by the server that received the message.".to_owned(),
                 };
-                ui.label(RichText::new(by).size(11.5).color(t::FAINT));
+                ui.label(RichText::new(by).size(11.5).color(t::faint()));
             });
             ui.end_row();
         });
@@ -153,7 +153,7 @@ impl Review {
 }
 
 fn fact(ui: &mut Ui, label: &str, value: &str) {
-    ui.label(RichText::new(label).color(t::MUTED));
+    ui.label(RichText::new(label).color(t::muted()));
     ui.add(egui::Label::new(value).wrap());
     ui.end_row();
 }
@@ -169,10 +169,10 @@ pub fn auth_pills(ui: &mut Ui, a: &Authentication) {
 
 fn auth_pill(ui: &mut Ui, name: &str, c: &Check) {
     let (fg, bg) = match c.verdict {
-        Verdict::Pass => (t::OK, t::RAISED),
-        Verdict::Fail => (t::DANGER, t::WARN_BG),
-        Verdict::Other => (t::WARN, t::RAISED),
-        Verdict::Missing => (t::FAINT, t::RAISED),
+        Verdict::Pass => (t::ok(), t::raised()),
+        Verdict::Fail => (t::danger(), t::warn_bg()),
+        Verdict::Other => (t::warn(), t::raised()),
+        Verdict::Missing => (t::faint(), t::raised()),
     };
     Frame::new().fill(bg).corner_radius(10).inner_margin(Margin::symmetric(8, 2)).show(ui, |ui| {
         ui.label(RichText::new(format!("{name} {}", c.word)).size(12.0).color(fg));
@@ -190,18 +190,18 @@ pub fn size_text(bytes: usize) -> String {
 /// The checks' results, the actions and the preview.
 fn ready(ui: &mut Ui, r: &mut Ready, info: &AttachmentInfo, temp: &mut TempFolder) {
     egui::Grid::new("mailalm-review-content").num_columns(2).spacing([14.0, 6.0]).show(ui, |ui| {
-        ui.label(RichText::new("Content").color(t::MUTED));
+        ui.label(RichText::new("Content").color(t::muted()));
         ui.label(RichText::new(format!("{} (found by MailALM from the file itself)", r.report.real.label())).strong());
         ui.end_row();
     });
     ui.add_space(8.0);
     if r.report.warnings.is_empty() {
-        ui.label(RichText::new("No warning.").color(t::OK));
+        ui.label(RichText::new("No warning.").color(t::ok()));
     }
     for w in &r.report.warnings {
         let (fg, mark) = match w.severity() {
-            Severity::Danger => (t::DANGER, "Danger"),
-            Severity::Caution => (t::WARN, "Caution"),
+            Severity::Danger => (t::danger(), "Danger"),
+            Severity::Caution => (t::warn(), "Caution"),
         };
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(mark).size(12.0).strong().color(fg));
@@ -240,20 +240,20 @@ fn ready(ui: &mut Ui, r: &mut Ready, info: &AttachmentInfo, temp: &mut TempFolde
         }
     });
     if let Err(why) = &policy.open {
-        ui.label(RichText::new(format!("Open with Windows: {why}")).size(11.5).color(t::FAINT));
+        ui.label(RichText::new(format!("Open with Windows: {why}")).size(11.5).color(t::faint()));
     }
 
     if r.confirm_open
         && let Ok(ext) = policy.open
     {
         ui.add_space(8.0);
-        Frame::new().fill(t::WARN_BG).corner_radius(6).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
+        Frame::new().fill(t::warn_bg()).corner_radius(6).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
             ui.label(
                 RichText::new(format!(
                     "Open \"{}\" with the program Windows uses for .{ext} files? Once it is open, MailALM cannot protect you: a marked copy is opened, so Office shows it in Protected View.",
                     info.name
                 ))
-                .color(t::WARN),
+                .color(t::warn()),
             );
             ui.horizontal(|ui| {
                 if ui.button("Open it").clicked() {
@@ -274,12 +274,12 @@ fn ready(ui: &mut Ui, r: &mut Ready, info: &AttachmentInfo, temp: &mut TempFolde
     }
     if let Some((text, problem)) = &r.note {
         ui.add_space(6.0);
-        ui.label(RichText::new(text.as_str()).color(if *problem { t::DANGER } else { t::ACCENT_TEXT }));
+        ui.label(RichText::new(text.as_str()).color(if *problem { t::danger() } else { t::accent_text() }));
     }
 
     if !matches!(r.preview, PreviewState::Off) {
         ui.add_space(10.0);
-        Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(6).inner_margin(Margin::same(8)).show(ui, |ui| {
+        Frame::new().fill(t::panel2()).stroke(Stroke::new(1.0, t::line())).corner_radius(6).inner_margin(Margin::same(8)).show(ui, |ui| {
             ScrollArea::vertical().max_height(440.0).auto_shrink([false, true]).show(ui, |ui| show_preview(ui, &r.preview));
         });
     }
@@ -309,7 +309,7 @@ fn show_preview(ui: &mut Ui, p: &PreviewState) {
         PreviewState::Working(_) => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(RichText::new("Drawing the preview…").color(t::MUTED));
+                ui.label(RichText::new("Drawing the preview…").color(t::muted()));
             });
         }
         PreviewState::Image(tex) => {
@@ -321,14 +321,14 @@ fn show_preview(ui: &mut Ui, p: &PreviewState) {
                 ui.add_space(6.0);
             }
             if *total > pages.len() {
-                ui.label(RichText::new(format!("{} of {total} pages shown. Save the PDF to read the rest.", pages.len())).color(t::FAINT));
+                ui.label(RichText::new(format!("{} of {total} pages shown. Save the PDF to read the rest.", pages.len())).color(t::faint()));
             }
         }
         PreviewState::Text(text) => {
             ui.add(egui::Label::new(RichText::new(text.as_str()).monospace().size(12.5)).wrap().selectable(true));
         }
         PreviewState::Failed(e) => {
-            ui.label(RichText::new(e.as_str()).color(t::DANGER));
+            ui.label(RichText::new(e.as_str()).color(t::danger()));
         }
     }
 }
@@ -368,5 +368,5 @@ fn open_with_windows(_path: &Path) -> Result<(), String> {
 
 /// The colour a review's lock takes in the reading pane.
 pub fn lock_color(reviewed: bool) -> Color32 {
-    if reviewed { t::OK } else { t::WARN }
+    if reviewed { t::ok() } else { t::warn() }
 }

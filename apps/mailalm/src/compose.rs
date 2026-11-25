@@ -548,7 +548,7 @@ impl Compose {
             if !dropped.is_empty() {
                 self.attach(&dropped);
             }
-            egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(18, 14))).show(ui, |ui| {
+            egui::CentralPanel::default().frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(18, 14))).show(ui, |ui| {
                 self.commands(ui, &ctx, cx, &mut action);
                 self.banners(ui, &ctx, cx, &mut action);
                 ui.add_space(10.0);
@@ -561,7 +561,7 @@ impl Compose {
                 let screen = ctx.content_rect();
                 let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::unique(("mailalm-compose-drop", self.id))));
                 painter.rect_filled(screen, 0.0, Color32::from_black_alpha(150));
-                painter.text(screen.center(), egui::Align2::CENTER_CENTER, "Drop to attach", egui::FontId::proportional(22.0), t::TEXT);
+                painter.text(screen.center(), egui::Align2::CENTER_CENTER, "Drop to attach", egui::FontId::proportional(22.0), t::text());
             }
             action
         })
@@ -618,7 +618,7 @@ impl Compose {
     fn commands(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, cx: &ComposeCtx<'_>, action: &mut ComposeAction) {
         ui.horizontal_wrapped(|ui| {
             let busy = self.checking.is_some();
-            if ui.add_enabled(!busy, Button::new(RichText::new("Send").strong().color(t::ON_ACCENT)).fill(t::ACCENT)).clicked() {
+            if ui.add_enabled(!busy, Button::new(RichText::new("Send").strong().color(t::on_accent())).fill(t::accent())).clicked() {
                 *action = self.request_send(ctx, cx, When::Now, false, false);
             }
             if ui.add_enabled(!busy, Button::new("Send later…")).on_hover_text("Choose the date and time it goes").clicked() {
@@ -678,11 +678,11 @@ impl Compose {
             let templates = writing.map(|w| w.templates.as_slice()).unwrap_or_default();
             let replies = writing.map(|w| w.quick_replies.as_slice()).unwrap_or_default();
             if templates.is_empty() && replies.is_empty() {
-                ui.label(RichText::new("No template or quick reply for this account yet: add them in Settings, Writing.").color(t::FAINT));
+                ui.label(RichText::new("No template or quick reply for this account yet: add them in Settings, Writing.").color(t::faint()));
                 return;
             }
             if !templates.is_empty() {
-                ui.label(RichText::new("TEMPLATES").size(11.0).strong().color(t::FAINT));
+                ui.label(RichText::new("TEMPLATES").size(11.0).strong().color(t::faint()));
                 for tpl in templates {
                     if ui.button(&tpl.name).clicked() {
                         chosen = Some((tpl.subject.clone(), import_html(&tpl.html, &[])));
@@ -691,7 +691,7 @@ impl Compose {
                 }
             }
             if !replies.is_empty() {
-                ui.label(RichText::new("QUICK REPLIES").size(11.0).strong().color(t::FAINT));
+                ui.label(RichText::new("QUICK REPLIES").size(11.0).strong().color(t::faint()));
                 for q in replies {
                     if ui.button(&q.name).on_hover_text(&q.text).clicked() {
                         chosen = Some((String::new(), Document::from_text(&q.text)));
@@ -712,7 +712,7 @@ impl Compose {
     fn banners(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, cx: &ComposeCtx<'_>, action: &mut ComposeAction) {
         let warn = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
             ui.add_space(6.0);
-            Frame::new().fill(t::WARN_BG).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
+            Frame::new().fill(t::warn_bg()).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| add(ui));
             });
         };
@@ -720,7 +720,7 @@ impl Compose {
             let draft = self.draft.is_some();
             warn(ui, &mut |ui| {
                 let text = if draft { "Discard this message? What you wrote is lost, and its draft is deleted from Drafts." } else { "Discard this message? What you wrote is lost." };
-                ui.label(RichText::new(text).color(t::WARN));
+                ui.label(RichText::new(text).color(t::warn()));
                 if ui.button("Discard").clicked() {
                     *action = ComposeAction::Discard;
                 }
@@ -732,7 +732,7 @@ impl Compose {
         if let Some(when) = self.confirm_no_attachment {
             let mut answer: Option<u8> = None;
             warn(ui, &mut |ui| {
-                ui.label(RichText::new("Your message mentions an attachment, but nothing is attached.").color(t::WARN));
+                ui.label(RichText::new("Your message mentions an attachment, but nothing is attached.").color(t::warn()));
                 for (n, label) in ["Send anyway", "Attach a file…", "Cancel"].into_iter().enumerate() {
                     if ui.button(label).clicked() {
                         answer = Some(n as u8);
@@ -757,7 +757,7 @@ impl Compose {
         if let Some(when) = self.unchecked {
             let mut answer: Option<bool> = None;
             warn(ui, &mut |ui| {
-                ui.label(RichText::new("Antidote's Anti-Oups! could not check this message.").color(t::WARN));
+                ui.label(RichText::new("Antidote's Anti-Oups! could not check this message.").color(t::warn()));
                 if ui.button("Send without the check").clicked() {
                     answer = Some(true);
                 }
@@ -777,11 +777,11 @@ impl Compose {
         }
         if let Some(e) = &self.error {
             ui.add_space(6.0);
-            ui.label(RichText::new(e).color(t::DANGER));
+            ui.label(RichText::new(e).color(t::danger()));
         }
         if let Some(n) = &self.notice {
             ui.add_space(4.0);
-            ui.label(RichText::new(n).size(12.5).color(t::ACCENT_TEXT));
+            ui.label(RichText::new(n).size(12.5).color(t::accent_text()));
         }
     }
 
@@ -794,7 +794,7 @@ impl Compose {
         let mut problem: Option<String> = None;
         if let Some(later) = &mut self.later {
             ui.add_space(6.0);
-            Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(6).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
+            Frame::new().fill(t::panel2()).stroke(Stroke::new(1.0, t::line())).corner_radius(6).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Send on");
                     ui.add(TextEdit::singleline(&mut later.date).hint_text(time::date(today + 1)).desired_width(96.0));
@@ -828,7 +828,7 @@ impl Compose {
                 ui.label(
                     RichText::new("MailALM sends it at that time if it is running; if it is closed then, it sends it as soon as it starts again, and says so.")
                         .size(11.5)
-                        .color(t::FAINT),
+                        .color(t::faint()),
                 );
             });
         }
@@ -847,10 +847,10 @@ impl Compose {
     fn fields(&mut self, ui: &mut egui::Ui, cx: &ComposeCtx<'_>) {
         let mut switch: Option<AccountId> = None;
         egui::Grid::new(("mailalm-compose-fields", self.id)).num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-            ui.label(RichText::new("From").color(t::MUTED));
+            ui.label(RichText::new("From").color(t::muted()));
             ui.horizontal(|ui| {
                 let current = cx.account(self.account);
-                let color = current.map_or(t::FAINT, |a| a.color);
+                let color = current.map_or(t::faint(), |a| a.color);
                 let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 ui.painter().circle_filled(r.center(), 5.0, color);
                 let shown = current.map_or_else(|| format_person(&self.from), |a| format!("{} · {}", a.name, a.address));
@@ -863,7 +863,7 @@ impl Compose {
                 });
             });
             ui.end_row();
-            ui.label(RichText::new("To").color(t::MUTED));
+            ui.label(RichText::new("To").color(t::muted()));
             ui.horizontal(|ui| {
                 let width = ui.available_width() - 70.0;
                 let to = autocomplete::field(ui, Id::unique(("mailalm-compose-to", self.id)), &mut self.to, width, "name@example.com, …", cx.suggest);
@@ -880,20 +880,20 @@ impl Compose {
             });
             ui.end_row();
             if self.show_cc {
-                ui.label(RichText::new("Cc").color(t::MUTED));
+                ui.label(RichText::new("Cc").color(t::muted()));
                 let width = ui.available_width();
                 if autocomplete::field(ui, Id::unique(("mailalm-compose-cc", self.id)), &mut self.cc, width, "", cx.suggest).changed() {
                     self.touched = true;
                 }
                 ui.end_row();
-                ui.label(RichText::new("Bcc").color(t::MUTED));
+                ui.label(RichText::new("Bcc").color(t::muted()));
                 let width = ui.available_width();
                 if autocomplete::field(ui, Id::unique(("mailalm-compose-bcc", self.id)), &mut self.bcc, width, "", cx.suggest).changed() {
                     self.touched = true;
                 }
                 ui.end_row();
             }
-            ui.label(RichText::new("Subject").color(t::MUTED));
+            ui.label(RichText::new("Subject").color(t::muted()));
             let subject_id = self.subject_id();
             let subject = ui.add(TextEdit::singleline(&mut self.subject).id(subject_id).desired_width(f32::INFINITY));
             if subject.changed() {
@@ -918,7 +918,7 @@ impl Compose {
                 if more > 0 { format!(" and {more} more") } else { String::new() }
             );
             ui.add_space(4.0);
-            ui.label(RichText::new(text).size(12.0).color(t::WARN)).on_hover_text("These recipients are not at the sender's own domain: check that they should get this message.");
+            ui.label(RichText::new(text).size(12.0).color(t::warn())).on_hover_text("These recipients are not at the sender's own domain: check that they should get this message.");
         }
     }
 
@@ -932,11 +932,11 @@ impl Compose {
         let mut remove: Option<usize> = None;
         ui.horizontal_wrapped(|ui| {
             for (n, a) in self.attachments.iter().enumerate() {
-                Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(6).inner_margin(Margin::symmetric(8, 4)).show(ui, |ui| {
+                Frame::new().fill(t::panel2()).stroke(Stroke::new(1.0, t::line())).corner_radius(6).inner_margin(Margin::symmetric(8, 4)).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(&a.name).strong());
-                        ui.label(RichText::new(size_text(a.bytes.len())).size(12.0).color(t::FAINT));
-                        if icons::button(ui, Icon::Close, egui::vec2(18.0, 18.0), t::MUTED, t::SEL, "Remove this attachment").clicked() {
+                        ui.label(RichText::new(size_text(a.bytes.len())).size(12.0).color(t::faint()));
+                        if icons::button(ui, Icon::Close, egui::vec2(18.0, 18.0), t::muted(), t::sel(), "Remove this attachment").clicked() {
                             remove = Some(n);
                         }
                     });
@@ -957,7 +957,7 @@ impl Compose {
             SizeLimit::Attachments(_) => "Attachments",
             SizeLimit::Message(_) => "Message, about",
         };
-        let color = if used > max { t::DANGER } else { t::FAINT };
+        let color = if used > max { t::danger() } else { t::faint() };
         ui.label(RichText::new(format!("{what} {} of {} at most for this account", size_text(used), size_text(max))).size(12.0).color(color));
     }
 

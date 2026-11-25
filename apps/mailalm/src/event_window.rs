@@ -362,7 +362,7 @@ impl EventEditor {
             }
             self.update_clashes(sources, generation);
             let mut action = EditorAction::None;
-            egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(18, 14))).show(ui, |ui| {
+            egui::CentralPanel::default().frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(18, 14))).show(ui, |ui| {
                 action = self.body(ui, choices, suggest);
             });
             action
@@ -390,7 +390,7 @@ impl EventEditor {
         let me = choice.as_ref().map(|c| c.address.clone()).unwrap_or_default();
         let is_meeting_guest = self.original.as_ref().is_some_and(|o| o.is_meeting() && !o.is_organizer);
         ui.horizontal(|ui| {
-            let save = ui.add_enabled(choice.is_some() && !is_meeting_guest, Button::new(RichText::new("Save").strong().color(t::ON_ACCENT)).fill(t::ACCENT));
+            let save = ui.add_enabled(choice.is_some() && !is_meeting_guest, Button::new(RichText::new("Save").strong().color(t::on_accent())).fill(t::accent()));
             if save.clicked() {
                 match self.build(&me) {
                     Ok(e) => {
@@ -412,16 +412,16 @@ impl EventEditor {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if let Some(c) = &choice {
-                    ui.label(RichText::new(&c.label).size(12.0).color(t::MUTED));
+                    ui.label(RichText::new(&c.label).size(12.0).color(t::muted()));
                 }
             });
         });
         if is_meeting_guest {
-            ui.label(RichText::new("You are a guest of this meeting: only its organizer can change it. Answer it from the calendar.").color(t::WARN));
+            ui.label(RichText::new("You are a guest of this meeting: only its organizer can change it. Answer it from the calendar.").color(t::warn()));
         }
         if self.confirm_close {
             warn_frame(ui, |ui| {
-                ui.label(RichText::new("Close without saving? Your changes are lost.").color(t::WARN));
+                ui.label(RichText::new("Close without saving? Your changes are lost.").color(t::warn()));
                 if ui.button("Close").clicked() {
                     action = EditorAction::Close;
                 }
@@ -435,7 +435,7 @@ impl EventEditor {
         {
             let tell = o.is_organizer && o.is_meeting();
             warn_frame(ui, |ui| {
-                ui.label(RichText::new(if o.recurrence.is_some() { "Delete this event and every occurrence of its series?" } else { "Delete this event?" }).color(t::WARN));
+                ui.label(RichText::new(if o.recurrence.is_some() { "Delete this event and every occurrence of its series?" } else { "Delete this event?" }).color(t::warn()));
                 if ui.button("Delete").clicked() {
                     action = EditorAction::Delete(self.account, Box::new(o.clone()), tell);
                 }
@@ -445,7 +445,7 @@ impl EventEditor {
             });
         }
         if let Some(e) = &self.error {
-            ui.label(RichText::new(e.as_str()).color(t::DANGER));
+            ui.label(RichText::new(e.as_str()).color(t::danger()));
         }
         ui.add_space(8.0);
         ScrollArea::vertical().id_salt(("mailalm-event-scroll", self.id)).auto_shrink([false, false]).show(ui, |ui| {
@@ -458,7 +458,7 @@ impl EventEditor {
     fn fields(&mut self, ui: &mut Ui, choices: &[CalendarChoice], provider: Option<Provider>, suggest: &dyn Fn(&str) -> Vec<Person>) {
         let id = self.id;
         Grid::new(("mailalm-event-fields", id)).num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-            ui.label(RichText::new("Calendar").color(t::MUTED));
+            ui.label(RichText::new("Calendar").color(t::muted()));
             let current = choices.iter().find(|c| c.account == self.account && c.calendar == self.calendar).map_or_else(|| "(a calendar that can't be changed)".to_owned(), |c| c.label.clone());
             if self.original.is_some() {
                 ui.label(current);
@@ -483,7 +483,7 @@ impl EventEditor {
             }
             ui.end_row();
 
-            ui.label(RichText::new("Title").color(t::MUTED));
+            ui.label(RichText::new("Title").color(t::muted()));
             ui.add(TextEdit::singleline(&mut self.title).desired_width(f32::INFINITY).hint_text("What is it?"));
             ui.end_row();
 
@@ -493,7 +493,7 @@ impl EventEditor {
             }
             ui.end_row();
 
-            ui.label(RichText::new("Starts").color(t::MUTED));
+            ui.label(RichText::new("Starts").color(t::muted()));
             ui.horizontal(|ui| {
                 ui.add(TextEdit::singleline(&mut self.start_date).desired_width(100.0).hint_text("2026-11-25"));
                 if !self.all_day {
@@ -501,7 +501,7 @@ impl EventEditor {
                 }
             });
             ui.end_row();
-            ui.label(RichText::new("Ends").color(t::MUTED));
+            ui.label(RichText::new("Ends").color(t::muted()));
             ui.horizontal(|ui| {
                 ui.add(TextEdit::singleline(&mut self.end_date).desired_width(100.0).hint_text("2026-11-25"));
                 if !self.all_day {
@@ -510,26 +510,26 @@ impl EventEditor {
             });
             ui.end_row();
             if !self.all_day {
-                ui.label(RichText::new("Time zone").color(t::MUTED));
+                ui.label(RichText::new("Time zone").color(t::muted()));
                 ui.horizontal(|ui| {
                     ui.add(TextEdit::singleline(&mut self.zone).desired_width(200.0).hint_text("America/Toronto"));
                     let z = self.zone.trim();
                     if !z.is_empty() && !zones::known(z) {
-                        ui.label(RichText::new("unknown zone").size(12.0).color(t::DANGER));
+                        ui.label(RichText::new("unknown zone").size(12.0).color(t::danger()));
                     }
                 });
                 ui.end_row();
             }
 
-            ui.label(RichText::new("Location").color(t::MUTED));
+            ui.label(RichText::new("Location").color(t::muted()));
             ui.add(TextEdit::singleline(&mut self.location).desired_width(f32::INFINITY).hint_text("A place, a room"));
             ui.end_row();
 
-            ui.label(RichText::new("Online meeting").color(t::MUTED));
+            ui.label(RichText::new("Online meeting").color(t::muted()));
             ui.vertical(|ui| self.online_choice(ui, provider));
             ui.end_row();
 
-            ui.label(RichText::new("Guests").color(t::MUTED));
+            ui.label(RichText::new("Guests").color(t::muted()));
             ui.vertical(|ui| {
                 let width = ui.available_width();
                 autocomplete::field(ui, Id::unique(("mailalm-event-guests", id)), &mut self.guests, width, "name@example.com, …", suggest);
@@ -538,19 +538,19 @@ impl EventEditor {
                     Some(Provider::Gmail) => "Google Calendar sends the invitations.",
                     _ => "MailALM sends the invitations by mail from this account.",
                 };
-                ui.label(RichText::new(hint).size(11.5).color(t::FAINT));
+                ui.label(RichText::new(hint).size(11.5).color(t::faint()));
             });
             ui.end_row();
 
-            ui.label(RichText::new("Reminder").color(t::MUTED));
+            ui.label(RichText::new("Reminder").color(t::muted()));
             self.reminder_choice(ui, provider);
             ui.end_row();
 
-            ui.label(RichText::new("Repeat").color(t::MUTED));
+            ui.label(RichText::new("Repeat").color(t::muted()));
             ui.vertical(|ui| self.repeat_choice(ui));
             ui.end_row();
 
-            ui.label(RichText::new("Show as").color(t::MUTED));
+            ui.label(RichText::new("Show as").color(t::muted()));
             ComboBox::from_id_salt(("mailalm-event-busy", id)).selected_text(busy_label(self.busy)).show_ui(ui, |ui| {
                 for b in [BusyStatus::Free, BusyStatus::Tentative, BusyStatus::Busy, BusyStatus::OutOfOffice] {
                     ui.selectable_value(&mut self.busy, b, busy_label(b));
@@ -559,7 +559,7 @@ impl EventEditor {
             ui.end_row();
         });
         ui.add_space(8.0);
-        ui.label(RichText::new("Description").color(t::MUTED));
+        ui.label(RichText::new("Description").color(t::muted()));
         ui.add(TextEdit::multiline(&mut self.description).desired_width(f32::INFINITY).desired_rows(6).hint_text("Notes, plain text"));
         if !self.guests.trim().is_empty() {
             ui.checkbox(&mut self.notify, "Send the invitation (or its update) to the guests");
@@ -598,15 +598,15 @@ impl EventEditor {
         });
         match self.online {
             Online::Teams => {
-                ui.label(RichText::new("Microsoft makes the Teams link if this account offers it; if it doesn't, saving says so and nothing is made.").size(11.5).color(t::FAINT));
+                ui.label(RichText::new("Microsoft makes the Teams link if this account offers it; if it doesn't, saving says so and nothing is made.").size(11.5).color(t::faint()));
             }
             Online::Meet => {
-                ui.label(RichText::new("Google makes the Meet link when the event is saved.").size(11.5).color(t::FAINT));
+                ui.label(RichText::new("Google makes the Meet link when the event is saved.").size(11.5).color(t::faint()));
             }
             Online::Link => {
                 ui.add(TextEdit::singleline(&mut self.link).desired_width(f32::INFINITY).hint_text("https://…"));
                 if let Some(d) = link_domain(&self.link) {
-                    ui.label(RichText::new(format!("Guests will see a link to {d}.")).size(11.5).color(t::FAINT));
+                    ui.label(RichText::new(format!("Guests will see a link to {d}.")).size(11.5).color(t::faint()));
                 }
             }
             Online::None | Online::Kept => {}
@@ -633,7 +633,7 @@ impl EventEditor {
 
     fn repeat_choice(&mut self, ui: &mut Ui) {
         if self.original.as_ref().is_some_and(|o| o.recurrence_id.is_some()) {
-            ui.label(RichText::new("One occurrence of a series: changes apply to it alone.").size(12.0).color(t::FAINT));
+            ui.label(RichText::new("One occurrence of a series: changes apply to it alone.").size(12.0).color(t::faint()));
             return;
         }
         let label = |r: Repeat| match r {
@@ -669,7 +669,7 @@ impl EventEditor {
         match self.repeat {
             Repeat::Kept => {
                 if let Some(r) = self.original.as_ref().and_then(|o| o.recurrence.as_ref()) {
-                    ui.label(RichText::new(repeat_text(r)).size(12.0).color(t::FAINT));
+                    ui.label(RichText::new(repeat_text(r)).size(12.0).color(t::faint()));
                 }
             }
             Repeat::Every(_) => {
@@ -710,10 +710,10 @@ impl EventEditor {
             return;
         }
         if self.clashes.is_empty() {
-            ui.label(RichText::new("No clash in your calendars, all accounts.").size(12.5).color(t::OK));
+            ui.label(RichText::new("No clash in your calendars, all accounts.").size(12.5).color(t::ok()));
             return;
         }
-        ui.label(RichText::new(format!("Clashes with {} event{} in your calendars:", self.clashes.len(), if self.clashes.len() > 1 { "s" } else { "" })).color(t::WARN));
+        ui.label(RichText::new(format!("Clashes with {} event{} in your calendars:", self.clashes.len(), if self.clashes.len() > 1 { "s" } else { "" })).color(t::warn()));
         for c in self.clashes.iter().take(20) {
             ui.label(RichText::new(format!("• {} — {} ({})", c.title, time::span(c.start, c.end, false), busy_label(c.status))).size(12.0));
         }
@@ -722,7 +722,7 @@ impl EventEditor {
 
 fn warn_frame(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     ui.add_space(6.0);
-    Frame::new().fill(t::WARN_BG).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
+    Frame::new().fill(t::warn_bg()).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
         ui.horizontal_wrapped(add);
     });
 }

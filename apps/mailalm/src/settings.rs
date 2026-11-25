@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use mailalm_model::{Account, AccountId};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::Language;
 use crate::signatures::Writing;
+use crate::theme::ThemeChoice;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Settings {
@@ -36,6 +38,19 @@ pub struct Settings {
     /// case).
     #[serde(default)]
     pub picture_senders: Vec<String>,
+    /// Dark, light, or as Windows is set.
+    #[serde(default)]
+    pub theme: ThemeChoice,
+    /// The interface's language (English by default).
+    #[serde(default)]
+    pub language: Language,
+    /// MCP access is on: MailALM listens on 127.0.0.1 for `mailalm-mcp` (PLAN.md, section 11). Off
+    /// by default.
+    #[serde(default)]
+    pub mcp_enabled: bool,
+    /// The accounts the MCP may not see.
+    #[serde(default)]
+    pub mcp_hidden: Vec<AccountId>,
 }
 
 impl Settings {
@@ -100,6 +115,28 @@ impl Settings {
     pub fn remove(&mut self, id: AccountId) {
         self.accounts.retain(|a| a.id != id);
         self.writing.retain(|w| w.account != id);
+        self.mcp_hidden.retain(|a| *a != id);
+        // A search kept for this account alone has nothing left to search.
+        self.saved_searches.retain(|s| s.accounts != mailalm_model::SearchScope::Accounts(vec![id]));
+        for s in &mut self.saved_searches {
+            if let mailalm_model::SearchScope::Accounts(ids) = &mut s.accounts {
+                ids.retain(|a| *a != id);
+            }
+        }
+    }
+
+    /// Whether the MCP may see this account (it exists and isn't hidden).
+    pub fn mcp_visible(&self, id: AccountId) -> bool {
+        self.accounts.iter().any(|a| a.id == id) && !self.mcp_hidden.contains(&id)
+    }
+
+    /// Shows or hides an account from the MCP.
+    pub fn set_mcp_visible(&mut self, id: AccountId, visible: bool) {
+        self.mcp_hidden.retain(|a| *a != id);
+        if !visible {
+            self.mcp_hidden.push(id);
+            self.mcp_hidden.sort();
+        }
     }
 
     /// The undo delay, in seconds.
@@ -138,5 +175,47 @@ impl Settings {
             self.picture_senders.push(a);
             self.picture_senders.sort();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mailalm_model::{FolderScope, SavedSearch, SearchScope};
+
+    use super::*;
+
+    /// Saved searches, the theme, the language and the MCP choices are kept in the settings file;
+    /// a file written before them reads with their defaults.
+    #[test]
+    fn saved_searches_and_new_choices_are_kept() {
+        let mut s = Settings { next_id: 3, ..Settings::default() };
+        let saved = SavedSearch::new("Invoices", "from:billing has:attachment", SearchScope::Accounts(vec![AccountId(2)]), FolderScope::WithSubfolders("INBOX".into()), true);
+        s.saved_searches.extend(saved);
+        s.theme = ThemeChoice::Light;
+        s.language = Language::French;
+        s.mcp_enabled = true;
+        s.set_mcp_visible(AccountId(2), false);
+        let json = serde_json::to_vec(&s).expect("written");
+        let back: Settings = serde_json::from_slice(&json).expect("read");
+        assert_eq!(back.saved_searches, s.saved_searches);
+        assert_eq!((back.theme, back.language, back.mcp_enabled), (ThemeChoice::Light, Language::French, true));
+        assert_eq!(back.mcp_hidden, vec![AccountId(2)]);
+
+        let old: Settings = serde_json::from_str(r#"{"accounts":[],"next_id":1}"#).expect("old file");
+        assert!(old.saved_searches.is_empty() && !old.mcp_enabled && old.mcp_hidden.is_empty());
+        assert_eq!((old.theme, old.language), (ThemeChoice::Dark, Language::English));
+    }
+
+    #[test]
+    fn removing_an_account_forgets_its_searches_and_mcp_choice() {
+        let mut s = Settings::default();
+        s.saved_searches.extend(SavedSearch::new("Mine", "x", SearchScope::Accounts(vec![AccountId(4)]), FolderScope::Account, false));
+        s.saved_searches.extend(SavedSearch::new("Both", "y", SearchScope::Accounts(vec![AccountId(4), AccountId(5)]), FolderScope::Account, false));
+        s.set_mcp_visible(AccountId(4), false);
+        s.remove(AccountId(4));
+        assert_eq!(s.saved_searches.len(), 1);
+        assert_eq!(s.saved_searches.first().map(|x| x.accounts.clone()), Some(SearchScope::Accounts(vec![AccountId(5)])));
+        assert!(s.mcp_hidden.is_empty());
+        assert!(!s.mcp_visible(AccountId(4)), "no such account");
     }
 }

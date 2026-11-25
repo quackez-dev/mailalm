@@ -41,7 +41,7 @@ pub fn field(ui: &mut Ui, id: Id, text: &mut String, width: f32, hint: &str, sug
     }
     let mut chosen: Option<usize> = if enter { Some(0) } else { None };
     let shown = egui::Area::new(id.with("mailalm-suggestions")).order(Order::Foreground).fixed_pos(response.rect.left_bottom() + vec2(0.0, 2.0)).show(&ctx, |ui| {
-        Frame::new().fill(t::RAISED).stroke(Stroke::new(1.0, t::LINE)).corner_radius(6).inner_margin(Margin::same(4)).show(ui, |ui| {
+        Frame::new().fill(t::raised()).stroke(Stroke::new(1.0, t::line())).corner_radius(6).inner_margin(Margin::same(4)).show(ui, |ui| {
             ui.set_width(response.rect.width().max(280.0));
             for (n, p) in list.iter().enumerate() {
                 let label = if p.name.is_empty() { RichText::new(&p.address) } else { RichText::new(format!("{}  <{}>", p.name, p.address)) };

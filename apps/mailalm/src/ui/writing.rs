@@ -41,12 +41,12 @@ pub(super) struct WritingPage {
 
 fn section(ui: &mut Ui, text: &str) {
     ui.add_space(20.0);
-    ui.label(RichText::new(text).size(11.0).strong().color(t::FAINT));
+    ui.label(RichText::new(text).size(11.0).strong().color(t::faint()));
     ui.add_space(6.0);
 }
 
 fn card(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
-    Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(8).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+    Frame::new().fill(t::panel2()).stroke(Stroke::new(1.0, t::line())).corner_radius(8).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
         ui.set_width(ui.available_width().min(720.0));
         add(ui);
     });
@@ -59,13 +59,13 @@ impl MailApp {
 
         section(ui, "SIGNATURES, TEMPLATES AND QUICK REPLIES");
         if accounts.is_empty() {
-            ui.label(RichText::new("Add an account first.").color(t::FAINT));
+            ui.label(RichText::new("Add an account first.").color(t::faint()));
         } else {
             let current = self.writing_page.account.filter(|a| accounts.iter().any(|(id, _)| id == a)).unwrap_or(accounts[0].0);
             self.writing_page.account = Some(current);
             card(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Account").color(t::MUTED));
+                    ui.label(RichText::new("Account").color(t::muted()));
                     let shown = accounts.iter().find(|(id, _)| *id == current).map(|(_, n)| n.clone()).unwrap_or_default();
                     egui::ComboBox::from_id_salt("mailalm-writing-account").selected_text(shown).show_ui(ui, |ui| {
                         for (id, name) in &accounts {
@@ -102,30 +102,30 @@ impl MailApp {
             ui.label(
                 RichText::new("A message scheduled for later is kept on this PC and sent by MailALM at its time if it is running, else as soon as it starts.")
                     .size(11.5)
-                    .color(t::FAINT),
+                    .color(t::faint()),
             );
         });
 
         section(ui, "ANTIDOTE");
         card(ui, |ui| {
             if self.sending.antidote {
-                ui.label(RichText::new("Antidote is installed: the compose window has its Corrector, Dictionaries and Guides.").color(t::OK));
+                ui.label(RichText::new("Antidote is installed: the compose window has its Corrector, Dictionaries and Guides.").color(t::ok()));
             } else {
-                ui.label(RichText::new("Antidote's connector was not found on this PC: its buttons are hidden.").color(t::MUTED));
+                ui.label(RichText::new("Antidote's connector was not found on this PC: its buttons are hidden.").color(t::muted()));
             }
             ui.add_enabled_ui(self.sending.antidote, |ui| {
                 if ui.checkbox(&mut self.settings.anti_oups, "Check each message with Anti-Oups! before it goes").changed() {
                     changed = true;
                 }
             });
-            ui.label(RichText::new("The text goes to the Antidote installed on this PC only (127.0.0.1), never elsewhere.").size(11.5).color(t::FAINT));
+            ui.label(RichText::new("The text goes to the Antidote installed on this PC only (127.0.0.1), never elsewhere.").size(11.5).color(t::faint()));
         });
 
         section(ui, "PICTURES FROM THE INTERNET");
         card(ui, |ui| {
-            ui.label(RichText::new("Blocked in every message, except for these senders. Tracking pictures never load.").size(12.0).color(t::MUTED));
+            ui.label(RichText::new("Blocked in every message, except for these senders. Tracking pictures never load.").size(12.0).color(t::muted()));
             if self.settings.picture_senders.is_empty() {
-                ui.label(RichText::new("No sender approved: use \"Always for this sender\" on a message.").size(12.0).color(t::FAINT));
+                ui.label(RichText::new("No sender approved: use \"Always for this sender\" on a message.").size(12.0).color(t::faint()));
             }
             let mut remove: Option<String> = None;
             for s in &self.settings.picture_senders {
@@ -159,7 +159,7 @@ impl MailApp {
             ui.label(RichText::new("Signature").strong());
             let preview = mailalm_compose::plain_text(&import_html(&signature, &[]));
             let preview = if preview.trim().is_empty() { "none".to_owned() } else { preview.lines().take(2).collect::<Vec<_>>().join(" · ") };
-            ui.label(RichText::new(preview).color(t::FAINT));
+            ui.label(RichText::new(preview).color(t::faint()));
             if ui.small_button("Edit…").clicked() {
                 open = Some((What::Signature, import_html(&signature, &[]), String::new(), String::new(), String::new()));
             }
@@ -169,7 +169,7 @@ impl MailApp {
         for (i, tpl) in templates.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(&tpl.name);
-                ui.label(RichText::new(&tpl.subject).color(t::FAINT));
+                ui.label(RichText::new(&tpl.subject).color(t::faint()));
                 if ui.small_button("Edit…").clicked() {
                     open = Some((What::Template(Some(i)), import_html(&tpl.html, &[]), tpl.name.clone(), tpl.subject.clone(), String::new()));
                 }
@@ -186,7 +186,7 @@ impl MailApp {
         for (i, q) in replies.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(&q.name);
-                ui.label(RichText::new(q.text.lines().next().unwrap_or("")).color(t::FAINT));
+                ui.label(RichText::new(q.text.lines().next().unwrap_or("")).color(t::faint()));
                 if ui.small_button("Edit…").clicked() {
                     open = Some((What::QuickReply(Some(i)), Document::new(), q.name.clone(), String::new(), q.text.clone()));
                 }
@@ -227,7 +227,7 @@ impl MailApp {
     fn writing_editor(&mut self, ui: &mut Ui) -> bool {
         let Some(e) = &mut self.writing_page.editing else { return false };
         let (mut save, mut cancel) = (false, false);
-        Frame::new().fill(t::PANEL).stroke(Stroke::new(1.0, t::LINE)).corner_radius(6).inner_margin(Margin::same(10)).show(ui, |ui| {
+        Frame::new().fill(t::panel()).stroke(Stroke::new(1.0, t::line())).corner_radius(6).inner_margin(Margin::same(10)).show(ui, |ui| {
             let title = match e.what {
                 What::Signature => "Signature",
                 What::Template(_) => "Template",
@@ -252,12 +252,12 @@ impl MailApp {
                 if toolbar(ui, &mut e.editor, &mut e.toolbar) == Some(ToolbarRequest::InsertImage) {
                     e.error = Some("Pictures are not kept in signatures and templates yet.".to_owned());
                 }
-                Frame::new().fill(t::PANEL2).inner_margin(Margin::same(6)).show(ui, |ui| {
+                Frame::new().fill(t::panel2()).inner_margin(Margin::same(6)).show(ui, |ui| {
                     RichEditor::new(&mut e.editor).id(Id::unique("mailalm-writing-editor")).min_height(110.0).show(ui);
                 });
             }
             if let Some(err) = &e.error {
-                ui.label(RichText::new(err).color(t::DANGER));
+                ui.label(RichText::new(err).color(t::danger()));
             }
             ui.horizontal(|ui| {
                 if ui.button("Save").clicked() {

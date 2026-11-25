@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use mailalm_engine::{Event, Link, Reviewed, SenderRule};
 use mailalm_mime::{HtmlBody, Parsed};
+use mailalm_model::later::{FollowUp, Snoozed};
+use mailalm_model::rules::Rule;
 use mailalm_model::{AccountId, Folder, FolderRole, Summary};
 
 /// One account, as the interface shows it.
@@ -17,11 +19,26 @@ pub struct AccountState {
     pub activity: Option<String>,
     /// The senders blocked or allowed on the server (Gmail filters), once listed.
     pub sender_rules: Option<Vec<SenderRule>>,
+    /// The account's rules (the server's, then MailALM's own), once listed (C5).
+    pub rules: Option<Vec<Rule>>,
+    /// The snoozed messages and follow-ups, once listed (C2).
+    pub snoozed: Vec<Snoozed>,
+    pub follow_ups: Vec<FollowUp>,
 }
 
 impl Default for AccountState {
     fn default() -> Self {
-        Self { folders: Vec::new(), summaries: HashMap::new(), link: Link::Idle, link_detail: String::new(), activity: None, sender_rules: None }
+        Self {
+            folders: Vec::new(),
+            summaries: HashMap::new(),
+            link: Link::Idle,
+            link_detail: String::new(),
+            activity: None,
+            sender_rules: None,
+            rules: None,
+            snoozed: Vec::new(),
+            follow_ups: Vec::new(),
+        }
     }
 }
 
@@ -86,6 +103,12 @@ pub enum Outcome {
     Attachment { key: MessageKey, index: usize, result: Result<Box<Reviewed>, String> },
     /// A compose window's draft saved on the server, or not.
     Draft { compose: u64, result: Result<String, String> },
+    /// The cached messages a rule being edited would touch.
+    RulePreview { account: AccountId, id: u64, hits: Vec<(String, Summary)> },
+    /// No answer came to a followed message by its date.
+    FollowUpDue { account: AccountId, follow_up: Box<FollowUp> },
+    /// What a server's search found, or why it couldn't search.
+    ServerResults { account: AccountId, id: u64, result: Result<Vec<(String, Summary)>, String> },
 }
 
 impl Mailboxes {
@@ -137,8 +160,18 @@ impl Mailboxes {
             Event::Notice { text, .. } => Outcome::Notice(text),
             // Calendars, tasks, contacts and invitations are the agenda's (`agenda::Pim::take`).
             Event::Calendars { .. } | Event::Tasks { .. } | Event::Contacts { .. } | Event::Invitation { .. } => Outcome::None,
-            // Rules, snoozed messages, follow-ups and server results: their pages come next.
-            Event::Rules { .. } | Event::RulePreview { .. } | Event::Later { .. } | Event::FollowUpDue { .. } | Event::ServerResults { .. } => Outcome::None,
+            Event::Rules { rules, .. } => {
+                state.rules = Some(rules);
+                Outcome::None
+            }
+            Event::Later { snoozed, follow_ups, .. } => {
+                state.snoozed = snoozed;
+                state.follow_ups = follow_ups;
+                Outcome::None
+            }
+            Event::RulePreview { id, hits, .. } => Outcome::RulePreview { account, id, hits },
+            Event::FollowUpDue { follow_up, .. } => Outcome::FollowUpDue { account, follow_up },
+            Event::ServerResults { id, result, .. } => Outcome::ServerResults { account, id, result },
         }
     }
 }

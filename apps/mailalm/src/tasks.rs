@@ -85,7 +85,7 @@ impl Pim {
 
     /// The tasks' commands, in the command bar.
     pub fn tasks_commands(&mut self, ui: &mut Ui, cx: &Ctx<'_>) {
-        if ui.add(Button::new(RichText::new("New task").strong().color(t::ON_ACCENT)).fill(t::ACCENT)).clicked() {
+        if ui.add(Button::new(RichText::new("New task").strong().color(t::on_accent())).fill(t::accent())).clicked() {
             self.new_task(cx, None);
         }
         ui.separator();
@@ -112,7 +112,7 @@ impl Pim {
     pub fn tasks_sidebar(&mut self, ui: &mut Ui, cx: &Ctx<'_>) {
         let current = self.current_list(cx);
         ui.add_space(6.0);
-        ui.label(RichText::new("TASK LISTS").size(11.0).strong().color(t::FAINT));
+        ui.label(RichText::new("TASK LISTS").size(11.0).strong().color(t::faint()));
         for a in cx.ws.accounts() {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -121,7 +121,7 @@ impl Pim {
                 ui.label(RichText::new(&a.name).strong());
             });
             let Some(d) = self.data.get(&a.id) else {
-                ui.label(RichText::new("   Waiting for the tasks…").size(12.0).color(t::FAINT));
+                ui.label(RichText::new("   Waiting for the tasks…").size(12.0).color(t::faint()));
                 continue;
             };
             let mut picked: Option<String> = None;
@@ -145,21 +145,21 @@ impl Pim {
         let current = self.current_list(cx);
         let mut sends: Vec<(AccountId, PimCommand)> = Vec::new();
         let mut edit: Option<(AccountId, Task)> = None;
-        egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(20, 14))).show(ui, |ui| {
+        egui::CentralPanel::default().frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(20, 14))).show(ui, |ui| {
             if let Some(ed) = &mut self.tasks.editing {
                 let reminders = cx.provider(ed.account) != Some(Provider::Gmail);
                 let mut close = false;
                 egui::Panel::right("mailalm-task-editor")
                     .resizable(true)
                     .default_size(340.0)
-                    .frame(Frame::new().fill(t::PANEL2).inner_margin(Margin::symmetric(14, 12)))
+                    .frame(Frame::new().fill(t::panel2()).inner_margin(Margin::symmetric(14, 12)))
                     .show(ui, |ui| task_editor(ui, ed, reminders, &mut sends, &mut close));
                 if close {
                     self.tasks.editing = None;
                 }
             }
             let Some((account, list_id)) = current.clone() else {
-                ui.label(RichText::new("No task list yet. Outlook accounts show Microsoft To Do, Gmail accounts Google Tasks, and IMAP accounts a list kept on this computer.").color(t::FAINT));
+                ui.label(RichText::new("No task list yet. Outlook accounts show Microsoft To Do, Gmail accounts Google Tasks, and IMAP accounts a list kept on this computer.").color(t::faint()));
                 return;
             };
             let Some(d) = self.data.get(&account) else { return };
@@ -168,7 +168,7 @@ impl Pim {
                 let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 ui.painter().rect_filled(r, 3.0, cx.color(account));
                 ui.label(RichText::new(&list_name).size(18.0).strong());
-                ui.label(RichText::new(cx.name(account)).size(12.0).color(t::FAINT));
+                ui.label(RichText::new(cx.name(account)).size(12.0).color(t::faint()));
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -186,7 +186,7 @@ impl Pim {
             let mut tasks: Vec<&Task> = d.tasks.iter().filter(|x| x.list == list_id && (self.tasks.show_done || !x.completed)).collect();
             tasks.sort_by_key(|x| (x.completed, x.due.unwrap_or(i64::MAX), x.title.to_lowercase()));
             if tasks.is_empty() {
-                ui.label(RichText::new("Nothing to do here.").color(t::FAINT));
+                ui.label(RichText::new("Nothing to do here.").color(t::faint()));
             }
             ScrollArea::vertical().id_salt("mailalm-tasks").auto_shrink([false, false]).show(ui, |ui| {
                 for task in tasks {
@@ -196,17 +196,17 @@ impl Pim {
                             let changed = Task { completed: done, completed_at: if done { Some(time::now()) } else { None }, ..task.clone() };
                             sends.push((account, PimCommand::SaveTask(Box::new(changed))));
                         }
-                        let title = if done { RichText::new(&task.title).strikethrough().color(t::FAINT) } else { RichText::new(&task.title) };
+                        let title = if done { RichText::new(&task.title).strikethrough().color(t::faint()) } else { RichText::new(&task.title) };
                         if ui.add(Button::new(title).frame_when_inactive(false)).on_hover_text("Edit").clicked() {
                             edit = Some((account, task.clone()));
                         }
                         if let Some(due) = task.due {
                             let day = due.div_euclid(86_400);
                             let late = !task.completed && day < today;
-                            ui.label(RichText::new(format!("due {}", time::date(day))).size(12.0).color(if late { t::DANGER } else { t::MUTED }));
+                            ui.label(RichText::new(format!("due {}", time::date(day))).size(12.0).color(if late { t::danger() } else { t::muted() }));
                         }
                         if let Some(r) = task.reminder {
-                            ui.label(RichText::new(format!("reminder {} {}", time::date(time::local_day(r)), time::clock(r))).size(12.0).color(t::FAINT));
+                            ui.label(RichText::new(format!("reminder {} {}", time::date(time::local_day(r)), time::clock(r))).size(12.0).color(t::faint()));
                         }
                     });
                 }
@@ -228,27 +228,27 @@ fn task_editor(ui: &mut Ui, ed: &mut TaskEditor, reminders: bool, sends: &mut Ve
     let new = ed.task.remote.id.is_empty();
     ui.label(RichText::new(if new { "New task" } else { "Task" }).size(16.0).strong());
     ui.add_space(6.0);
-    ui.label(RichText::new("Title").color(t::MUTED));
+    ui.label(RichText::new("Title").color(t::muted()));
     ui.add(TextEdit::singleline(&mut ed.title).desired_width(f32::INFINITY));
-    ui.label(RichText::new("Due").color(t::MUTED));
+    ui.label(RichText::new("Due").color(t::muted()));
     ui.add(TextEdit::singleline(&mut ed.due).desired_width(110.0).hint_text("2026-11-25"));
-    ui.label(RichText::new("Reminder").color(t::MUTED));
+    ui.label(RichText::new("Reminder").color(t::muted()));
     if reminders {
         ui.horizontal(|ui| {
             ui.add(TextEdit::singleline(&mut ed.reminder_date).desired_width(110.0).hint_text("2026-11-25"));
             ui.add(TextEdit::singleline(&mut ed.reminder_time).desired_width(56.0).hint_text("09:00"));
         });
     } else {
-        ui.label(RichText::new("Google Tasks has no reminders in its API.").size(12.0).color(t::FAINT));
+        ui.label(RichText::new("Google Tasks has no reminders in its API.").size(12.0).color(t::faint()));
     }
-    ui.label(RichText::new("Notes").color(t::MUTED));
+    ui.label(RichText::new("Notes").color(t::muted()));
     ui.add(TextEdit::multiline(&mut ed.notes).desired_width(f32::INFINITY).desired_rows(6));
     if let Some(e) = &ed.error {
-        ui.label(RichText::new(e.as_str()).color(t::DANGER));
+        ui.label(RichText::new(e.as_str()).color(t::danger()));
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        if ui.add(Button::new(RichText::new("Save").strong().color(t::ON_ACCENT)).fill(t::ACCENT)).clicked() {
+        if ui.add(Button::new(RichText::new("Save").strong().color(t::on_accent())).fill(t::accent())).clicked() {
             match ed.build(reminders) {
                 Ok(task) => {
                     sends.push((ed.account, PimCommand::SaveTask(Box::new(task))));
@@ -265,8 +265,8 @@ fn task_editor(ui: &mut Ui, ed: &mut TaskEditor, reminders: bool, sends: &mut Ve
         }
     });
     if ed.confirm_delete {
-        Frame::new().fill(t::WARN_BG).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
-            ui.label(RichText::new("Delete this task?").color(t::WARN));
+        Frame::new().fill(t::warn_bg()).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
+            ui.label(RichText::new("Delete this task?").color(t::warn()));
             ui.horizontal(|ui| {
                 if ui.button("Delete").clicked() {
                     sends.push((ed.account, PimCommand::DeleteTask(Box::new(ed.task.clone()))));

@@ -2,14 +2,17 @@
 //! in an accordion), message list, reading pane and status bar. IMAP accounts (phase 2), Outlook
 //! accounts through Microsoft Graph (phase 3) and Gmail accounts through the Gmail API (phase 4).
 //! The reading pane (`ui/reading.rs`), the compose windows and what waits to be sent
-//! (`ui/sending.rs`) and the writing settings (`ui/writing.rs`) have modules of their own.
+//! (`ui/sending.rs`) and the writing settings (`ui/writing.rs`) have modules of their own; so do
+//! the search with its scope and search folders (`ui/search.rs`), the rules (`ui/rules.rs`),
+//! snooze and follow-ups (`ui/later.rs`), the MCP access (`ui/mcp.rs`), import, export and the
+//! mail kept on this PC (`ui/porting.rs`), and the appearance and language (`ui/appearance.rs`).
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use egui::{
     Align, Align2, Button, Color32, CornerRadius, FontId, Frame, Id, Key, Layout, Margin, Painter, Pos2, Rect, Response, RichText, ScrollArea,
-    Sense, Stroke, TextEdit, Ui, Vec2, ViewportCommand, pos2, vec2,
+    Sense, Stroke, Ui, Vec2, ViewportCommand, pos2, vec2,
 };
 use mailalm_engine::{Command, Engine, Link, SenderCommand, SenderRuleKind};
 use mailalm_mime::{Outgoing, format_person};
@@ -21,6 +24,7 @@ use crate::agenda::{Ctx, Pim, PimPage};
 use crate::attachments::{Review, ReviewAction};
 use crate::compose::{self, Compose};
 use crate::icons::{self, Icon};
+use crate::local::{LOCAL, LocalBox};
 use crate::mailbox::{Mailboxes, MessageKey, Outcome, Reading};
 use crate::reading::MessageView;
 use crate::settings::Settings;
@@ -28,8 +32,14 @@ use crate::theme as t;
 use crate::time::{self, Group};
 use crate::window;
 
+mod appearance;
+mod later;
+mod mcp;
 mod pim;
+mod porting;
 mod reading;
+mod rules;
+mod search;
 mod sending;
 mod writing;
 
@@ -51,6 +61,8 @@ enum View {
     Flagged,
     /// The results of the last search.
     Search,
+    /// The snoozed messages and the follow-ups of every account.
+    Snoozed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,23 +76,41 @@ enum Page {
 struct SearchState {
     id: u64,
     query: String,
+    /// The search folder opened, if it is one.
+    name: Option<String>,
     /// Accounts that have not answered yet.
     waiting: usize,
     hits: Vec<(AccountId, String, Summary)>,
+    /// Accounts whose server has not answered yet.
+    server_waiting: usize,
+    /// What the servers found that the cache doesn't have, shown below "from the server".
+    server: Vec<(AccountId, String, Summary)>,
+    /// Why a server could not search.
+    server_errors: Vec<String>,
+    /// Where it looked, and whether the servers were asked: what a search folder keeps.
+    targets: Vec<(AccountId, mailalm_model::FolderScope)>,
+    server_asked: bool,
 }
+
+/// The `source` of a search hit in a [`Row::Message`].
+const HIT: usize = usize::MAX;
+/// The `source` of a hit from a server.
+const SERVER_HIT: usize = usize::MAX - 1;
 
 /// One line of the message list: a message (where its summary is) or a group's title.
 #[derive(Clone, Copy)]
 enum Row {
     Group(Group),
-    /// `source` indexes `ListCache::sources` (or is `usize::MAX` for a search hit); `pos` is the
-    /// summary's place in that folder's list (or in the hits).
+    /// A title of its own ("FROM THE SERVER").
+    Heading(&'static str),
+    /// `source` indexes `ListCache::sources` (or is [`HIT`] or [`SERVER_HIT`] for a search hit);
+    /// `pos` is the summary's place in that folder's list (or in the hits).
     Message { source: usize, pos: usize },
 }
 
 #[derive(Default)]
 struct ListCache {
-    key: Option<(View, u64, u64, usize)>,
+    key: Option<(View, u64, u64, usize, usize)>,
     sources: Vec<(AccountId, String)>,
     rows: Vec<Row>,
     tops: Vec<f32>,
@@ -132,6 +162,20 @@ pub struct MailApp {
     sending: sending::Sending,
     /// The writing settings being edited.
     writing_page: writing::WritingPage,
+    /// Wakes the interface (for the threads of the MCP, the imports and exports).
+    wake: mailalm_engine::Wake,
+    /// The mail kept on this PC only (imported mail).
+    local: LocalBox,
+    /// The search's scope, the search folder being named or renamed.
+    search_ui: search::SearchUi,
+    /// The rules page and its editor.
+    rules: rules::RulesPage,
+    /// Snooze and follow-ups: the date picked, the reminders due.
+    later: later::LaterUi,
+    /// The MCP access: its server, the journal, what waits for the user's confirmation.
+    mcp: mcp::McpState,
+    /// The import or export under way.
+    porting: porting::PortingState,
 }
 
 impl MailApp {
@@ -139,9 +183,12 @@ impl MailApp {
         let (settings, problem) = Settings::load();
         let (sending, schedule_problem) = sending::Sending::load();
         let problem = problem.or(schedule_problem);
+        t::apply(ctx, settings.theme);
         let wake_ctx = ctx.clone();
+        let wake: mailalm_engine::Wake = Arc::new(move || wake_ctx.request_repaint());
         let zones: mailalm_engine::Zones = Arc::new(crate::zones::TzRules);
-        let mut engine = Engine::new(Settings::cache_dir(), Arc::new(move || wake_ctx.request_repaint()), zones);
+        let mut engine = Engine::new(Settings::cache_dir(), Arc::clone(&wake), zones);
+        let local = LocalBox::start(Settings::cache_dir(), Arc::clone(&wake));
         for a in &settings.accounts {
             engine.start(a.clone());
         }
@@ -150,7 +197,8 @@ impl MailApp {
             Some(a) => View::Folder(a.id, None),
             None => View::Unified,
         };
-        Self {
+        let mcp_on = settings.mcp_enabled;
+        let mut app = Self {
             settings,
             ws,
             engine,
@@ -181,7 +229,24 @@ impl MailApp {
             leave_list: None,
             sending,
             writing_page: writing::WritingPage::default(),
+            wake,
+            local,
+            search_ui: search::SearchUi::default(),
+            rules: rules::RulesPage::default(),
+            later: later::LaterUi::default(),
+            mcp: mcp::McpState::default(),
+            porting: porting::PortingState::default(),
+        };
+        // MCP access left on when MailALM was last closed listens again.
+        if mcp_on {
+            app.start_mcp();
         }
+        app
+    }
+
+    /// Sends a command to an account's worker, or to the thread of the mail kept on this PC.
+    fn send(&self, id: AccountId, command: Command) -> bool {
+        if id == LOCAL { self.local.send(command) } else { self.engine.send(id, command) }
     }
 
     fn say(&mut self, text: impl Into<String>) {
@@ -197,7 +262,7 @@ impl MailApp {
     }
 
     fn color_of(&self, id: AccountId) -> Color32 {
-        self.account(id).map_or(t::FAINT, |a| t::account(a.color))
+        self.account(id).map_or(t::faint(), |a| t::account(a.color))
     }
 
     /// The folder path a view of an account shows: the one chosen, or its Inbox.
@@ -211,7 +276,7 @@ impl MailApp {
     fn view_name(&self) -> String {
         match &self.view {
             View::Folder(id, folder) => {
-                let account = self.account(*id).map_or("", |a| a.name.as_str()).to_owned();
+                let account = if *id == LOCAL { crate::local::LOCAL_NAME } else { self.account(*id).map_or("", |a| a.name.as_str()) }.to_owned();
                 let folder = self
                     .folder_path(*id, folder)
                     .and_then(|p| self.boxes.account(*id).and_then(|s| s.folder(&p)).map(|f| display_name(f.role, f.name())))
@@ -221,16 +286,13 @@ impl MailApp {
             View::Unified => "Unified inbox".to_owned(),
             View::Flagged => "Flagged, all accounts".to_owned(),
             View::Search => match &self.search_state {
-                Some(s) => format!("Search: {}", s.query),
+                Some(s) => match &s.name {
+                    Some(name) => format!("Search folder: {name}"),
+                    None => format!("Search: {}", s.query),
+                },
                 None => "Search".to_owned(),
             },
-        }
-    }
-
-    fn scope_label(&self) -> String {
-        match self.ws.focused_account() {
-            Some(a) => a.name.clone(),
-            None => "All accounts".to_owned(),
+            View::Snoozed => "Snoozed and follow-ups".to_owned(),
         }
     }
 
@@ -255,7 +317,7 @@ impl MailApp {
         if let View::Folder(id, folder) = &view
             && let Some(path) = self.folder_path(*id, folder)
         {
-            self.engine.send(*id, Command::View(path));
+            self.send(*id, Command::View(path));
         }
         self.view = view;
         self.create_menu = None;
@@ -265,7 +327,8 @@ impl MailApp {
     // ---- events ----
 
     fn poll(&mut self) {
-        for e in self.engine.poll() {
+        let events: Vec<mailalm_engine::Event> = self.engine.poll().into_iter().chain(self.local.poll()).collect();
+        for e in events {
             let Some(e) = self.pim.take(e) else { continue };
             match self.boxes.apply(e) {
                 Outcome::None => {}
@@ -320,6 +383,9 @@ impl MailApp {
                         s.waiting = s.waiting.saturating_sub(1);
                     }
                 }
+                Outcome::ServerResults { account, id, result } => self.server_results(account, id, result),
+                Outcome::RulePreview { account, id, hits } => self.rules.preview_arrived(account, id, hits),
+                Outcome::FollowUpDue { account, follow_up } => self.follow_up_due(account, *follow_up),
             }
         }
         // A view on a folder the account no longer has falls back to its Inbox.
@@ -334,8 +400,9 @@ impl MailApp {
 
     fn rebuild_list(&mut self) {
         let search_len = self.search_state.as_ref().map_or(0, |s| s.hits.len());
+        let server_len = self.search_state.as_ref().map_or(0, |s| s.server.len());
         let search_id = self.search_state.as_ref().map_or(0, |s| s.id);
-        let key = (self.view.clone(), self.boxes.generation, search_id, search_len);
+        let key = (self.view.clone(), self.boxes.generation, search_id, search_len, server_len);
         if self.list.key.as_ref() == Some(&key) {
             return;
         }
@@ -364,15 +431,18 @@ impl MailApp {
                     }
                 }
             }
-            View::Search => {}
+            View::Search | View::Snoozed => {}
         }
 
         // (date, source, pos) of every message shown.
         let mut entries: Vec<(i64, usize, usize)> = Vec::new();
+        // The server's hits, shown below the cache's.
+        let mut server: Vec<(i64, usize, usize)> = Vec::new();
         let flagged_only = self.view == View::Flagged;
         if self.view == View::Search {
             if let Some(s) = &self.search_state {
-                entries.extend(s.hits.iter().enumerate().map(|(pos, h)| (h.2.date, usize::MAX, pos)));
+                entries.extend(s.hits.iter().enumerate().map(|(pos, h)| (h.2.date, HIT, pos)));
+                server.extend(s.server.iter().enumerate().map(|(pos, h)| (h.2.date, SERVER_HIT, pos)));
             }
         } else {
             for (n, (id, path)) in sources.iter().enumerate() {
@@ -391,7 +461,16 @@ impl MailApp {
         let mut y = 0.0;
         let mut last_group = None;
         let mut unread = 0;
-        for (date, source, pos) in entries {
+        let first_server = entries.len();
+        server.sort_by(|a, b| b.0.cmp(&a.0));
+        entries.extend(server);
+        for (n, (date, source, pos)) in entries.into_iter().enumerate() {
+            if n == first_server && source == SERVER_HIT {
+                rows.push(Row::Heading("FROM THE SERVER"));
+                tops.push(y);
+                y += GROUP_HEIGHT;
+                last_group = None;
+            }
             let group = Group::of(date);
             if last_group != Some(group) {
                 rows.push(Row::Group(group));
@@ -415,8 +494,9 @@ impl MailApp {
 
     /// A message of the list: its account, folder and summary.
     fn lookup<'a>(&'a self, sources: &'a [(AccountId, String)], source: usize, pos: usize) -> Option<(AccountId, &'a str, &'a Summary)> {
-        if source == usize::MAX {
-            let h = self.search_state.as_ref()?.hits.get(pos)?;
+        if source == HIT || source == SERVER_HIT {
+            let s = self.search_state.as_ref()?;
+            let h = if source == HIT { s.hits.get(pos)? } else { s.server.get(pos)? };
             return Some((h.0, h.1.as_str(), &h.2));
         }
         let (id, path) = sources.get(source)?;
@@ -428,7 +508,8 @@ impl MailApp {
         if let Some(s) = self.boxes.account(key.account).and_then(|a| a.summary(&key.folder, key.uid)) {
             return Some(s);
         }
-        self.search_state.as_ref()?.hits.iter().find(|h| h.0 == key.account && h.1 == key.folder && h.2.uid == key.uid).map(|h| &h.2)
+        let s = self.search_state.as_ref()?;
+        s.hits.iter().chain(&s.server).find(|h| h.0 == key.account && h.1 == key.folder && h.2.uid == key.uid).map(|h| &h.2)
     }
 
     // ---- actions on messages ----
@@ -438,9 +519,9 @@ impl MailApp {
             return;
         }
         let unread = self.summary_of(&key).is_some_and(|s| !s.flags.seen);
-        self.engine.send(key.account, Command::Open { folder: key.folder.clone(), uid: key.uid });
+        self.send(key.account, Command::Open { folder: key.folder.clone(), uid: key.uid });
         if unread {
-            self.engine.send(key.account, Command::Apply(Change::SetSeen { folder: key.folder.clone(), uids: vec![key.uid], seen: true }));
+            self.send(key.account, Command::Apply(Change::SetSeen { folder: key.folder.clone(), uids: vec![key.uid], seen: true }));
             self.mark_hit(&key, |s| s.flags.seen = true);
         }
         self.reading = Some(Reading { key: key.clone(), parsed: None, html: None, error: None });
@@ -450,7 +531,7 @@ impl MailApp {
     /// Keeps a search hit in step with a change made to its message.
     fn mark_hit(&mut self, key: &MessageKey, f: impl Fn(&mut Summary)) {
         if let Some(s) = &mut self.search_state {
-            for h in s.hits.iter_mut().filter(|h| h.0 == key.account && h.1 == key.folder && h.2.uid == key.uid) {
+            for h in s.hits.iter_mut().chain(s.server.iter_mut()).filter(|h| h.0 == key.account && h.1 == key.folder && h.2.uid == key.uid) {
                 f(&mut h.2);
             }
             // The list is rebuilt from the hits.
@@ -525,10 +606,15 @@ impl MailApp {
             (1, _) => self.move_selected(FolderRole::Inbox),
             (2, Some(Provider::Gmail)) => self.set_sender(&key, true),
             (3, Some(Provider::Gmail)) => self.set_sender(&key, false),
-            (_, Some(Provider::Outlook)) => self.say(
-                "Microsoft's API cannot change Outlook.com's blocked senders: block this sender in Outlook.com's settings (Mail, Junk email). MailALM's own blocking arrives with the rules (phase 8).",
+            (2, Some(Provider::Outlook)) => self.say(
+                "Microsoft's API cannot change Outlook.com's blocked senders: block this sender in Outlook.com's settings (Mail, Junk email), or make a rule that moves its messages to Junk (Move, Create a rule from this message).",
             ),
-            (_, _) => self.say("Blocking a sender on an IMAP account arrives with the rules (phase 8)."),
+            (2, Some(Provider::Imap(_))) => {
+                self.say("An IMAP server keeps no blocked senders: make a MailALM rule that moves this sender's messages to Junk.");
+                self.rule_from_message();
+            }
+            (_, None) => self.say("Mail kept on this PC has no junk folder."),
+            (_, _) => self.say("Only a blocked sender can be unblocked: Settings, Rules lists the rules about senders."),
         }
     }
 
@@ -544,7 +630,7 @@ impl MailApp {
         }
         let gmail = self.account(key.account).is_some_and(|a| a.provider == Provider::Gmail);
         self.select_after_removal(key);
-        self.engine.send(key.account, Command::Apply(Change::MarkJunk { folder: key.folder.clone(), uids: vec![key.uid], junk }));
+        self.send(key.account, Command::Apply(Change::MarkJunk { folder: key.folder.clone(), uids: vec![key.uid], junk }));
         self.drop_hit(key);
         self.say(match (gmail, junk) {
             (true, true) => "Reported to Gmail as spam, and moved to Spam.",
@@ -586,13 +672,14 @@ impl MailApp {
 
     fn move_to(&mut self, key: &MessageKey, to: String) {
         self.select_after_removal(key);
-        self.engine.send(key.account, Command::Apply(Change::Move { folder: key.folder.clone(), uids: vec![key.uid], to }));
+        self.send(key.account, Command::Apply(Change::Move { folder: key.folder.clone(), uids: vec![key.uid], to }));
         self.drop_hit(key);
     }
 
     fn drop_hit(&mut self, key: &MessageKey) {
         if let Some(s) = &mut self.search_state {
             s.hits.retain(|h| !(h.0 == key.account && h.1 == key.folder && h.2.uid == key.uid));
+            s.server.retain(|h| !(h.0 == key.account && h.1 == key.folder && h.2.uid == key.uid));
         }
     }
 
@@ -621,7 +708,7 @@ impl MailApp {
             self.say("Select a message first.");
             return;
         };
-        self.engine.send(key.account, Command::Apply(Change::SetFlagged { folder: key.folder.clone(), uids: vec![key.uid], flagged }));
+        self.send(key.account, Command::Apply(Change::SetFlagged { folder: key.folder.clone(), uids: vec![key.uid], flagged }));
         self.mark_hit(&key, |s| s.flags.flagged = flagged);
     }
 
@@ -630,7 +717,7 @@ impl MailApp {
             self.say("Select a message first.");
             return;
         };
-        self.engine.send(key.account, Command::Apply(Change::SetSeen { folder: key.folder.clone(), uids: vec![key.uid], seen }));
+        self.send(key.account, Command::Apply(Change::SetSeen { folder: key.folder.clone(), uids: vec![key.uid], seen }));
         self.mark_hit(&key, |s| s.flags.seen = seen);
     }
 
@@ -663,7 +750,18 @@ impl MailApp {
             self.say("The message is still loading.");
             return;
         };
-        let account = r.key.account;
+        // Mail kept on this PC is answered from the focused account (or the first one).
+        let account = if r.key.account == LOCAL {
+            match self.ws.focused_account().or_else(|| self.ws.accounts().first()) {
+                Some(a) => a.id,
+                None => {
+                    self.say("Add an account to answer from.");
+                    return;
+                }
+            }
+        } else {
+            r.key.account
+        };
         let date = parsed.date.or_else(|| self.summary_of(&r.key).map(|s| s.date)).unwrap_or(0);
         let me = self.me(account);
         let long = time::long(date);
@@ -687,42 +785,6 @@ impl MailApp {
             (mailalm_mime::reply(parsed, &me, all, &format!("On {long},")), compose::reply_document(&attribution, original))
         };
         self.compose(account, o, Some(doc));
-    }
-
-    // ---- search ----
-
-    fn run_search(&mut self) {
-        let query = self.search.trim().to_owned();
-        if query.is_empty() {
-            self.clear_search();
-            return;
-        }
-        let targets: Vec<AccountId> = match self.ws.focused_account() {
-            Some(a) => vec![a.id],
-            None => self.ws.accounts().iter().map(|a| a.id).collect(),
-        };
-        let id = self.next_search;
-        self.next_search += 1;
-        let mut waiting = 0;
-        for a in targets {
-            if self.engine.send(a, Command::Search { id, query: query.clone() }) {
-                waiting += 1;
-            }
-        }
-        self.search_state = Some(SearchState { id, query, waiting, hits: Vec::new() });
-        self.view = View::Search;
-        self.page = Page::Mail;
-    }
-
-    fn clear_search(&mut self) {
-        self.search.clear();
-        self.search_state = None;
-        if self.view == View::Search {
-            self.view = match self.ws.focused_account() {
-                Some(a) => View::Folder(a.id, None),
-                None => View::Unified,
-            };
-        }
     }
 
     // ---- accounts ----
@@ -788,6 +850,7 @@ impl MailApp {
             self.review = None;
         }
         self.reviewed.retain(|(k, _)| k.account != id);
+        self.rules.forget(id);
         self.view = match self.ws.focused_account() {
             Some(a) => View::Folder(a.id, None),
             None => View::Unified,
@@ -798,7 +861,9 @@ impl MailApp {
 
 impl eframe::App for MailApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        t::sync(ui.ctx());
         self.poll();
+        self.mcp_tick(ui);
         self.rebuild_list();
         self.keys(ui);
         self.title_bar(ui);
@@ -806,7 +871,8 @@ impl eframe::App for MailApp {
         self.status_bar(ui);
         self.folder_pane(ui);
         match self.page {
-            Page::Mail if self.ws.accounts().is_empty() => self.welcome(ui),
+            Page::Mail if self.ws.accounts().is_empty() && !matches!(self.view, View::Folder(LOCAL, _)) => self.welcome(ui),
+            Page::Mail if self.view == View::Snoozed => self.snoozed_page(ui),
             Page::Mail => {
                 self.message_list(ui);
                 self.reading_pane(ui);
@@ -822,6 +888,9 @@ impl eframe::App for MailApp {
         self.compose_windows(ui);
         self.sending_tick(ui);
         self.pim_windows(ui);
+        self.later_windows(ui);
+        self.porting_window(ui);
+        self.mcp_dialogs(ui);
         window::resize_edges(ui);
     }
 }
@@ -877,7 +946,7 @@ impl MailApp {
             .exact_size(34.0)
             .resizable(false)
             .show_separator_line(false)
-            .frame(Frame::new().fill(t::TITLE))
+            .frame(Frame::new().fill(t::title()))
             .show(ui, |ui| {
                 let bar = ui.max_rect();
                 window::title_bar_drag(ui, bar);
@@ -885,29 +954,29 @@ impl MailApp {
                     ui.add_space(12.0);
                     let (logo, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
                     ui.painter().rect_filled(logo, 6.0, Color32::WHITE);
-                    ui.painter().text(logo.center(), Align2::CENTER_CENTER, "M", FontId::proportional(13.0), t::TITLE);
-                    ui.add(egui::Label::new(RichText::new("MailALM").color(t::TITLE_TEXT).strong().size(14.0)).selectable(false));
+                    ui.painter().text(logo.center(), Align2::CENTER_CENTER, "M", FontId::proportional(13.0), t::title());
+                    ui.add(egui::Label::new(RichText::new("MailALM").color(t::title_text()).strong().size(14.0)).selectable(false));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         let size = vec2(44.0, 34.0);
                         let hover = Color32::from_rgba_unmultiplied(255, 255, 255, 40);
                         let ctx = ui.ctx().clone();
-                        if icons::button(ui, Icon::Close, size, t::TITLE_TEXT, Color32::from_rgb(0xc4, 0x2b, 0x1c), "Close").clicked() {
+                        if icons::button(ui, Icon::Close, size, t::title_text(), Color32::from_rgb(0xc4, 0x2b, 0x1c), "Close").clicked() {
                             ctx.send_viewport_cmd(ViewportCommand::Close);
                         }
-                        if icons::button(ui, Icon::Maximize, size, t::TITLE_TEXT, hover, "Maximize or restore").clicked() {
+                        if icons::button(ui, Icon::Maximize, size, t::title_text(), hover, "Maximize or restore").clicked() {
                             window::toggle_maximized(&ctx);
                         }
-                        if icons::button(ui, Icon::Minimize, size, t::TITLE_TEXT, hover, "Minimize").clicked() {
+                        if icons::button(ui, Icon::Minimize, size, t::title_text(), hover, "Minimize").clicked() {
                             ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
                         }
                         ui.add_space(6.0);
                         let small = vec2(32.0, 28.0);
-                        if icons::button(ui, Icon::Settings, small, t::TITLE_TEXT, hover, "Settings").clicked() {
+                        if icons::button(ui, Icon::Settings, small, t::title_text(), hover, "Settings").clicked() {
                             self.page = if self.page == Page::Settings { Page::Mail } else { Page::Settings };
                             self.create_menu = None;
                         }
-                        if icons::button(ui, Icon::Refresh, small, t::TITLE_TEXT, hover, "Send and receive all").clicked() {
+                        if icons::button(ui, Icon::Refresh, small, t::title_text(), hover, "Send and receive all").clicked() {
                             let ids: Vec<AccountId> = self.ws.accounts().iter().map(|a| a.id).collect();
                             for id in ids {
                                 self.engine.send(id, Command::SyncAll);
@@ -915,7 +984,7 @@ impl MailApp {
                             self.say("Checking every account for new mail…");
                         }
                         ui.centered_and_justified(|ui| {
-                            ui.add(egui::Label::new(RichText::new(title).color(t::TITLE_TEXT).size(12.0)).selectable(false).truncate());
+                            ui.add(egui::Label::new(RichText::new(title).color(t::title_text()).size(12.0)).selectable(false).truncate());
                         });
                     });
                 });
@@ -928,19 +997,19 @@ impl MailApp {
 fn separator(ui: &mut Ui) {
     ui.add_space(4.0);
     let (r, _) = ui.allocate_exact_size(vec2(1.0, 22.0), Sense::hover());
-    ui.painter().rect_filled(r, 0.0, t::LINE);
+    ui.painter().rect_filled(r, 0.0, t::line());
     ui.add_space(4.0);
 }
 
 fn flat(ui: &mut Ui, label: &str) -> Response {
-    ui.add(Button::new(RichText::new(label).color(t::TEXT)).frame_when_inactive(false))
+    ui.add(Button::new(RichText::new(label).color(t::text())).frame_when_inactive(false))
 }
 
 impl MailApp {
     fn command_bar(&mut self, ui: &mut Ui) {
         egui::Panel::top("command-bar")
             .resizable(false)
-            .frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(12, 8)))
+            .frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(12, 8)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // The calendar, contacts and tasks have their own commands.
@@ -976,18 +1045,16 @@ impl MailApp {
                             }
                         }
                         ui.separator();
-                        ui.label(RichText::new("Outlook: reported to Outlook.com, which moves the message.").size(11.0).color(t::MUTED));
-                        ui.label(RichText::new("Gmail: reported to Gmail as spam; senders are blocked or allowed by Gmail filters.").size(11.0).color(t::MUTED));
-                        ui.label(RichText::new("IMAP: moved to the server's Junk folder.").size(11.0).color(t::MUTED));
+                        ui.label(RichText::new("Outlook: reported to Outlook.com, which moves the message.").size(11.0).color(t::muted()));
+                        ui.label(RichText::new("Gmail: reported to Gmail as spam; senders are blocked or allowed by Gmail filters.").size(11.0).color(t::muted()));
+                        ui.label(RichText::new("IMAP: moved to the server's Junk folder.").size(11.0).color(t::muted()));
                     });
                     if let Some(n) = junk {
                         self.junk_action(n);
                     }
                     separator(ui);
                     self.move_menu(ui);
-                    let _ = ui.menu_button(("Snooze", icons::atom(Icon::ChevronDown)), |ui| {
-                        ui.label(RichText::new("Snooze arrives in phase 8.").color(t::FAINT));
-                    });
+                    self.snooze_menu(ui);
                     let mut flag: Option<bool> = None;
                     let _ = ui.menu_button(("Flag", icons::atom(Icon::ChevronDown)), |ui| {
                         if ui.button("Flag").clicked() {
@@ -998,6 +1065,11 @@ impl MailApp {
                             flag = Some(false);
                             ui.close();
                         }
+                        ui.separator();
+                        self.follow_up_menu(ui);
+                        ui.separator();
+                        ui.label(RichText::new("Categories").color(t::faint()))
+                            .on_hover_text("Setting Outlook categories and Gmail labels on a message isn't possible in MailALM yet: the search finds them (category:name).");
                     });
                     if let Some(f) = flag {
                         self.set_flag(f);
@@ -1010,6 +1082,8 @@ impl MailApp {
                                 ui.close();
                             }
                         }
+                        ui.separator();
+                        self.export_menu(ui);
                     });
                     match more {
                         Some(0) => self.set_seen(true),
@@ -1018,24 +1092,13 @@ impl MailApp {
                             if let View::Folder(id, folder) = self.view.clone()
                                 && let Some(p) = self.folder_path(id, &folder)
                             {
-                                self.engine.send(id, Command::View(p));
+                                self.send(id, Command::View(p));
                             }
                         }
                         None => {}
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if self.search_state.is_some() && ui.small_button("Clear").on_hover_text("Back to the folder").clicked() {
-                            self.clear_search();
-                        }
-                        let scope = self.scope_label();
-                        let edit = ui.add(TextEdit::singleline(&mut self.search).hint_text("Search — from:, subject:, has:attachment").desired_width(260.0));
-                        if edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                            self.run_search();
-                        }
-                        if edit.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
-                            self.clear_search();
-                        }
-                        ui.label(RichText::new(scope).size(12.0).color(t::MUTED)).on_hover_text("Search scope: the focused account, or all accounts in the unified inbox.");
+                        self.search_bar(ui);
                     });
                 });
             });
@@ -1049,9 +1112,11 @@ impl MailApp {
             .map(|s| s.folders.iter().map(|f| (f.path.clone(), display_name(f.role, f.name()), f.depth())).collect())
             .unwrap_or_default();
         let mut chosen: Option<String> = None;
+        let mut make_rule = false;
+        let can_rule = account.is_some_and(|a| a != LOCAL);
         let _ = ui.menu_button(("Move", icons::atom(Icon::ChevronDown)), |ui| {
             if folders.is_empty() {
-                ui.label(RichText::new("Select a message first.").color(t::FAINT));
+                ui.label(RichText::new("Select a message first.").color(t::faint()));
                 return;
             }
             ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
@@ -1063,9 +1128,19 @@ impl MailApp {
                     }
                 }
             });
+            if can_rule {
+                ui.separator();
+                if ui.button("Create a rule from this message…").on_hover_text("A rule for this sender's messages, in Settings, Rules").clicked() {
+                    make_rule = true;
+                    ui.close();
+                }
+            }
         });
         if let (Some(to), Some(key)) = (chosen, self.selected.clone()) {
             self.move_to(&key, to);
+        }
+        if make_rule {
+            self.rule_from_message();
         }
     }
 
@@ -1083,25 +1158,25 @@ impl MailApp {
                 let (main_rect, main) = ui.allocate_exact_size(vec2(122.0, h), Sense::click());
                 let (arrow_rect, arrow) = ui.allocate_exact_size(vec2(26.0, h), Sense::click());
                 let p = ui.painter();
-                let fill = |r: &Response| if r.hovered() { t::ACCENT_TEXT } else { t::ACCENT };
+                let fill = |r: &Response| if r.hovered() { t::accent_text() } else { t::accent() };
                 p.rect_filled(main_rect, CornerRadius { nw: 6, sw: 6, ne: 0, se: 0 }, fill(&main));
                 p.rect_filled(arrow_rect, CornerRadius { nw: 0, sw: 0, ne: 6, se: 6 }, fill(&arrow));
                 p.line_segment(
                     [arrow_rect.left_top() + vec2(0.0, 6.0), arrow_rect.left_bottom() - vec2(0.0, 6.0)],
                     Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 70)),
                 );
-                icons::paint(p, Rect::from_center_size(pos2(main_rect.left() + 16.0, main_rect.center().y), Vec2::splat(14.0)), Icon::Plus, t::ON_ACCENT);
+                icons::paint(p, Rect::from_center_size(pos2(main_rect.left() + 16.0, main_rect.center().y), Vec2::splat(14.0)), Icon::Plus, t::on_accent());
                 let text_x = main_rect.left() + 30.0;
                 match &sender {
                     Some(name) => {
-                        p.text(pos2(text_x, main_rect.center().y - 7.0), Align2::LEFT_CENTER, "New mail", FontId::proportional(13.5), t::ON_ACCENT);
-                        p.text(pos2(text_x, main_rect.center().y + 8.0), Align2::LEFT_CENTER, name, FontId::proportional(11.0), t::ON_ACCENT);
+                        p.text(pos2(text_x, main_rect.center().y - 7.0), Align2::LEFT_CENTER, "New mail", FontId::proportional(13.5), t::on_accent());
+                        p.text(pos2(text_x, main_rect.center().y + 8.0), Align2::LEFT_CENTER, name, FontId::proportional(11.0), t::on_accent());
                     }
                     None => {
-                        p.text(pos2(text_x, main_rect.center().y), Align2::LEFT_CENTER, "New mail", FontId::proportional(13.5), t::ON_ACCENT);
+                        p.text(pos2(text_x, main_rect.center().y), Align2::LEFT_CENTER, "New mail", FontId::proportional(13.5), t::on_accent());
                     }
                 }
-                icons::paint(p, arrow_rect, Icon::ChevronDown, t::ON_ACCENT);
+                icons::paint(p, arrow_rect, Icon::ChevronDown, t::on_accent());
                 (main, arrow)
             })
             .inner;
@@ -1150,16 +1225,16 @@ impl MailApp {
             .fixed_pos(anchor + vec2(0.0, 4.0))
             .show(&ctx, |ui| {
                 Frame::new()
-                    .fill(t::RAISED)
-                    .stroke(Stroke::new(1.0, t::LINE))
+                    .fill(t::raised())
+                    .stroke(Stroke::new(1.0, t::line()))
                     .corner_radius(10)
                     .inner_margin(Margin::same(6))
                     .show(ui, |ui| {
                         ui.set_width(330.0);
                         ui.spacing_mut().item_spacing.y = 0.0;
                         let (heading, color) = match focused {
-                            Some(_) => ("NEW MAIL FROM", t::FAINT),
-                            None => ("CHOOSE THE ACCOUNT TO SEND FROM", t::ACCENT_TEXT),
+                            Some(_) => ("NEW MAIL FROM", t::faint()),
+                            None => ("CHOOSE THE ACCOUNT TO SEND FROM", t::accent_text()),
                         };
                         ui.add_space(4.0);
                         ui.label(RichText::new(heading).size(11.0).strong().color(color));
@@ -1228,26 +1303,26 @@ fn menu_row(ui: &mut Ui, dot: Option<Color32>, label: &str, detail: &str, right:
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
     let p = ui.painter_at(rect);
     if current {
-        p.rect_filled(rect, 6.0, t::SEL);
+        p.rect_filled(rect, 6.0, t::sel());
     } else if response.hovered() {
-        p.rect_filled(rect, 6.0, t::PANEL2);
+        p.rect_filled(rect, 6.0, t::panel2());
     }
     let mut x = rect.left() + 10.0;
     if let Some(c) = dot {
         p.circle_filled(pos2(x + 4.0, rect.center().y), 4.5, c);
         x += 16.0;
     }
-    let label_rect = p.text(pos2(x, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(13.0), t::TEXT);
+    let label_rect = p.text(pos2(x, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(13.0), t::text());
     if !detail.is_empty() {
-        p.text(pos2(label_rect.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, detail, FontId::proportional(12.0), t::FAINT);
+        p.text(pos2(label_rect.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, detail, FontId::proportional(12.0), t::faint());
     }
     let mut right_edge = rect.right() - 10.0;
     if current {
-        icons::paint(&p, Rect::from_center_size(pos2(right_edge - 5.0, rect.center().y), Vec2::splat(10.0)), Icon::Check, t::ACCENT_TEXT);
+        icons::paint(&p, Rect::from_center_size(pos2(right_edge - 5.0, rect.center().y), Vec2::splat(10.0)), Icon::Check, t::accent_text());
         right_edge -= 16.0;
     }
     if !right.is_empty() {
-        p.text(pos2(right_edge, rect.center().y), Align2::RIGHT_CENTER, right, FontId::proportional(11.5), t::ACCENT_TEXT);
+        p.text(pos2(right_edge, rect.center().y), Align2::RIGHT_CENTER, right, FontId::proportional(11.5), t::accent_text());
     }
     response
 }
@@ -1256,7 +1331,7 @@ fn menu_row(ui: &mut Ui, dot: Option<Color32>, label: &str, detail: &str, right:
 
 fn section(ui: &mut Ui, text: &str) {
     ui.add_space(6.0);
-    ui.label(RichText::new(text).size(11.0).strong().color(t::FAINT));
+    ui.label(RichText::new(text).size(11.0).strong().color(t::faint()));
     ui.add_space(2.0);
 }
 
@@ -1265,17 +1340,17 @@ fn folder_row(ui: &mut Ui, indent: f32, selected: bool, label: &str, count: u32)
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
     let p = ui.painter_at(rect);
     if selected {
-        p.rect_filled(rect, 6.0, t::SEL);
+        p.rect_filled(rect, 6.0, t::sel());
     } else if response.hovered() {
-        p.rect_filled(rect, 6.0, t::RAISED);
+        p.rect_filled(rect, 6.0, t::raised());
     }
     let count_left = if count > 0 {
-        p.text(pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, count.to_string(), FontId::proportional(12.5), t::ACCENT_TEXT).left() - 6.0
+        p.text(pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, count.to_string(), FontId::proportional(12.5), t::accent_text()).left() - 6.0
     } else {
         rect.right() - 6.0
     };
     p.with_clip_rect(Rect::from_min_max(rect.min, pos2(count_left, rect.bottom())))
-        .text(pos2(rect.left() + indent, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(13.0), t::TEXT);
+        .text(pos2(rect.left() + indent, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(13.0), t::text());
     response
 }
 
@@ -1294,10 +1369,10 @@ fn display_name(role: FolderRole, name: &str) -> String {
 
 fn link_color(link: Link) -> Color32 {
     match link {
-        Link::Online => t::OK,
-        Link::Connecting | Link::Idle => t::WARN,
-        Link::Offline => t::FAINT,
-        Link::SignInRefused => t::DANGER,
+        Link::Online => t::ok(),
+        Link::Connecting | Link::Idle => t::warn(),
+        Link::Offline => t::faint(),
+        Link::SignInRefused => t::danger(),
     }
 }
 
@@ -1308,7 +1383,7 @@ impl MailApp {
             .resizable(true)
             .default_size(FOLDERS_WIDTH)
             .size_range(200.0..=420.0)
-            .frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(8, 8)))
+            .frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(8, 8)))
             .show(ui, |ui| {
                 egui::Panel::bottom("modules").resizable(false).frame(Frame::new().inner_margin(Margin::symmetric(0, 6))).show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -1334,6 +1409,7 @@ impl MailApp {
                         if ui.button("Add an account…").clicked() {
                             self.form = Some(AccountForm::new());
                         }
+                        self.local_pane(ui);
                         return;
                     }
                     if self.ws.unified_available() {
@@ -1351,6 +1427,14 @@ impl MailApp {
                     for id in ids {
                         self.account_block(ui, id);
                     }
+                    self.saved_searches_pane(ui);
+                    let snoozed: usize = self.boxes.accounts.values().map(|s| s.snoozed.len() + s.follow_ups.len()).sum();
+                    section(ui, "LATER");
+                    let count = u32::try_from(snoozed).unwrap_or(u32::MAX);
+                    if folder_row(ui, 10.0, self.view == View::Snoozed, "Snoozed and follow-ups", count).clicked() {
+                        self.open_snoozed();
+                    }
+                    self.local_pane(ui);
                 });
             });
     }
@@ -1369,18 +1453,18 @@ impl MailApp {
         let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 42.0), Sense::click());
         let p = ui.painter_at(rect);
         if expanded {
-            p.rect_filled(rect, 4.0, t::PANEL2);
+            p.rect_filled(rect, 4.0, t::panel2());
         } else if response.hovered() {
-            p.rect_filled(rect, 4.0, t::RAISED);
+            p.rect_filled(rect, 4.0, t::raised());
         }
         p.rect_filled(Rect::from_min_size(rect.min, vec2(3.0, rect.height())), 1.0, color);
         let chevron = if expanded { Icon::ChevronDown } else { Icon::ChevronRight };
-        icons::paint(&p, Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), Vec2::splat(12.0)), chevron, t::MUTED);
-        let name_rect = p.text(pos2(rect.left() + 28.0, rect.top() + 13.0), Align2::LEFT_CENTER, &name, FontId::proportional(13.5), t::TEXT);
+        icons::paint(&p, Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), Vec2::splat(12.0)), chevron, t::muted());
+        let name_rect = p.text(pos2(rect.left() + 28.0, rect.top() + 13.0), Align2::LEFT_CENTER, &name, FontId::proportional(13.5), t::text());
         p.circle_filled(pos2(name_rect.right() + 8.0, name_rect.center().y), 3.5, link_color(link));
-        p.text(pos2(rect.left() + 28.0, rect.top() + 29.0), Align2::LEFT_CENTER, &address, FontId::proportional(11.0), t::FAINT);
+        p.text(pos2(rect.left() + 28.0, rect.top() + 29.0), Align2::LEFT_CENTER, &address, FontId::proportional(11.0), t::faint());
         if unread > 0 {
-            p.text(pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, unread.to_string(), FontId::proportional(13.0), t::ACCENT_TEXT);
+            p.text(pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, unread.to_string(), FontId::proportional(13.0), t::accent_text());
         }
         let status = match link {
             Link::Online => format!("Connected to {detail}"),
@@ -1407,7 +1491,7 @@ impl MailApp {
                 .map(|s| s.folders.iter().map(|f| (f.path.clone(), display_name(f.role, f.name()), f.depth(), f.unread)).collect())
                 .unwrap_or_default();
             if folders.is_empty() {
-                ui.label(RichText::new("  Waiting for the server…").size(12.0).color(t::FAINT));
+                ui.label(RichText::new("  Waiting for the server…").size(12.0).color(t::faint()));
             }
             let current = match &self.view {
                 View::Folder(v, folder) if *v == id => self.folder_path(id, folder),
@@ -1453,22 +1537,20 @@ impl MailApp {
     fn message_list(&mut self, ui: &mut Ui) {
         let (title, subtitle, swatch) = match &self.view {
             View::Folder(id, _) => (self.view_name(), self.account(*id).map(|a| a.address.clone()).unwrap_or_default(), self.color_of(*id)),
-            View::Unified => ("Unified inbox".to_owned(), format!("{} accounts", self.ws.accounts().len()), t::ACCENT),
-            View::Flagged => ("Flagged".to_owned(), "all accounts".to_owned(), t::ACCENT),
-            View::Search => {
-                let waiting = self.search_state.as_ref().is_some_and(|s| s.waiting > 0);
-                let n = self.search_state.as_ref().map_or(0, |s| s.hits.len());
-                (self.view_name(), if waiting { "searching…".to_owned() } else { format!("{n} found in the cache") }, t::ACCENT)
-            }
+            View::Unified => ("Unified inbox".to_owned(), format!("{} accounts", self.ws.accounts().len()), t::accent()),
+            View::Flagged => ("Flagged".to_owned(), "all accounts".to_owned(), t::accent()),
+            View::Search => (self.view_name(), self.search_subtitle(), t::accent()),
+            View::Snoozed => (self.view_name(), String::new(), t::accent()),
         };
-        let mark_accounts = self.ws.unified_available() && !matches!(self.view, View::Folder(..));
+        // Search results always show their account's colour (a server's hits most of all).
+        let mark_accounts = (self.ws.unified_available() && !matches!(self.view, View::Folder(..))) || self.view == View::Search;
         let mut clicked: Option<MessageKey> = None;
         // Resizable: the line between the list and the reading pane is a splitter.
         egui::Panel::left("messages")
             .resizable(true)
             .default_size(MESSAGES_WIDTH)
             .size_range(300.0..=720.0)
-            .frame(Frame::new().fill(t::PANEL2))
+            .frame(Frame::new().fill(t::panel2()))
             .show(ui, |ui| {
                 Frame::new().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -1476,7 +1558,7 @@ impl MailApp {
                         ui.painter().rect_filled(r, 3.0, swatch);
                         ui.add(egui::Label::new(RichText::new(title).size(17.0).strong()).truncate());
                     });
-                    ui.label(RichText::new(subtitle).size(12.0).color(t::FAINT));
+                    ui.label(RichText::new(subtitle).size(12.0).color(t::faint()));
                 });
                 if self.list.rows.is_empty() {
                     ui.add_space(30.0);
@@ -1486,7 +1568,7 @@ impl MailApp {
                             View::Flagged => "No flagged message.",
                             _ => "No message here yet.",
                         };
-                        ui.label(RichText::new(text).color(t::FAINT));
+                        ui.label(RichText::new(text).color(t::faint()));
                     });
                     return;
                 }
@@ -1505,7 +1587,11 @@ impl MailApp {
                         let rect = Rect::from_min_size(origin + vec2(0.0, top), vec2(width, height));
                         match self.list.rows[i] {
                             Row::Group(g) => {
-                                ui.painter().text(pos2(rect.left() + 14.0, rect.center().y), Align2::LEFT_CENTER, g.label(), FontId::proportional(11.0), t::FAINT);
+                                ui.painter().text(pos2(rect.left() + 14.0, rect.center().y), Align2::LEFT_CENTER, g.label(), FontId::proportional(11.0), t::faint());
+                            }
+                            Row::Heading(text) => {
+                                ui.painter().rect_filled(rect, 0.0, t::raised());
+                                ui.painter().text(pos2(rect.left() + 14.0, rect.center().y), Align2::LEFT_CENTER, text, FontId::proportional(11.0), t::accent_text());
                             }
                             Row::Message { source, pos } => {
                                 let Some((account, folder, s)) = self.lookup(&self.list.sources, source, pos) else { continue };
@@ -1531,29 +1617,29 @@ impl MailApp {
 fn message_row(painter: &Painter, rect: Rect, m: &Summary, selected: bool, hovered: bool, stripe: Option<Color32>) {
     let p = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
     if selected {
-        p.rect_filled(rect, 0.0, t::SEL);
+        p.rect_filled(rect, 0.0, t::sel());
     } else if hovered {
-        p.rect_filled(rect, 0.0, t::RAISED);
+        p.rect_filled(rect, 0.0, t::raised());
     }
     if let Some(c) = stripe {
         p.rect_filled(Rect::from_min_size(rect.min, vec2(3.0, rect.height())), 0.0, c);
     }
-    p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, t::LINE));
+    p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, t::line()));
     let unread = !m.flags.seen;
     let from = m.from.display();
     let avatar = pos2(rect.left() + 27.0, rect.top() + 24.0);
     p.circle_filled(avatar, 16.0, avatar_color(&m.from.address));
     p.text(avatar, Align2::CENTER_CENTER, initials(from), FontId::proportional(12.0), Color32::WHITE);
     if unread {
-        p.circle_filled(pos2(rect.left() + 7.0, rect.top() + 14.0), 3.0, t::ACCENT_TEXT);
+        p.circle_filled(pos2(rect.left() + 7.0, rect.top() + 14.0), 3.0, t::accent_text());
     }
 
     let x = rect.left() + 52.0;
-    let accent = if unread { t::ACCENT_TEXT } else { t::TEXT };
-    let time_rect = p.text(pos2(rect.right() - 12.0, rect.top() + 14.0), Align2::RIGHT_CENTER, time::short(m.date), FontId::proportional(12.0), if unread { t::ACCENT_TEXT } else { t::FAINT });
+    let accent = if unread { t::accent_text() } else { t::text() };
+    let time_rect = p.text(pos2(rect.right() - 12.0, rect.top() + 14.0), Align2::RIGHT_CENTER, time::short(m.date), FontId::proportional(12.0), if unread { t::accent_text() } else { t::faint() });
     let clip = |right: f32| -> Painter { p.with_clip_rect(Rect::from_min_max(pos2(x, rect.top()), pos2(right, rect.bottom())).intersect(p.clip_rect())) };
     let from_font = if unread { FontId::proportional(13.5) } else { FontId::proportional(13.0) };
-    clip(time_rect.left() - 8.0).text(pos2(x, rect.top() + 14.0), Align2::LEFT_CENTER, from, from_font, t::TEXT);
+    clip(time_rect.left() - 8.0).text(pos2(x, rect.top() + 14.0), Align2::LEFT_CENTER, from, from_font, t::text());
     let mut marks = String::new();
     if m.has_attachments {
         marks.push('📎');
@@ -1564,12 +1650,12 @@ fn message_row(painter: &Painter, rect: Rect, m: &Summary, selected: bool, hover
     let marks_left = if marks.is_empty() {
         rect.right() - 12.0
     } else {
-        let color = if m.flags.flagged { t::DANGER } else { t::FAINT };
+        let color = if m.flags.flagged { t::danger() } else { t::faint() };
         p.text(pos2(rect.right() - 12.0, rect.top() + 32.0), Align2::RIGHT_CENTER, &marks, FontId::proportional(12.0), color).left() - 6.0
     };
     let subject = if m.subject.is_empty() { "(no subject)" } else { m.subject.as_str() };
     clip(marks_left).text(pos2(x, rect.top() + 32.0), Align2::LEFT_CENTER, subject, FontId::proportional(13.0), accent);
-    clip(rect.right() - 12.0).text(pos2(x, rect.top() + 49.0), Align2::LEFT_CENTER, &m.preview, FontId::proportional(12.0), t::FAINT);
+    clip(rect.right() - 12.0).text(pos2(x, rect.top() + 49.0), Align2::LEFT_CENTER, &m.preview, FontId::proportional(12.0), t::faint());
 }
 
 // ---- reading pane -----------------------------------------------------------------------------
@@ -1595,14 +1681,14 @@ fn size_text(bytes: usize) -> String {
 
 impl MailApp {
     fn welcome(&mut self, ui: &mut Ui) {
-        egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL)).show(ui, |ui| {
+        egui::CentralPanel::default().frame(Frame::new().fill(t::panel())).show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(120.0);
                 ui.label(RichText::new("Welcome to MailALM").size(24.0).strong());
                 ui.add_space(8.0);
-                ui.label(RichText::new("Add your Vidéotron, Bell, Hotmail, Outlook.com, Gmail or other IMAP account to start.").color(t::MUTED));
+                ui.label(RichText::new("Add your Vidéotron, Bell, Hotmail, Outlook.com, Gmail or other IMAP account to start.").color(t::muted()));
                 ui.add_space(16.0);
-                if ui.add(Button::new(RichText::new("Add an account").strong().color(t::ON_ACCENT)).fill(t::ACCENT)).clicked() {
+                if ui.add(Button::new(RichText::new("Add an account").strong().color(t::on_accent())).fill(t::accent())).clicked() {
                     self.form = Some(AccountForm::new());
                 }
             });
@@ -1616,7 +1702,7 @@ impl MailApp {
         let mut back = false;
         let mut senders: Option<AccountId> = None;
         let mut sender_command: Option<(AccountId, SenderCommand)> = None;
-        egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(28, 20))).show(ui, |ui| {
+        egui::CentralPanel::default().frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(28, 20))).show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Back to Mail").clicked() {
                     back = true;
@@ -1625,11 +1711,11 @@ impl MailApp {
             });
             ui.add_space(14.0);
             ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.label(RichText::new("ACCOUNTS").size(11.0).strong().color(t::FAINT));
+                ui.label(RichText::new("ACCOUNTS").size(11.0).strong().color(t::faint()));
                 ui.add_space(6.0);
                 for a in self.ws.accounts() {
                     let state = self.boxes.account(a.id);
-                    Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(8).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+                    Frame::new().fill(t::panel2()).stroke(Stroke::new(1.0, t::line())).corner_radius(8).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
                         ui.set_width(ui.available_width().min(720.0));
                         ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(4.0, 34.0), Sense::hover());
@@ -1642,7 +1728,7 @@ impl MailApp {
                                     _ if a.provider == Provider::Gmail => format!("{} · Gmail (Gmail API)", a.address),
                                     _ => a.address.clone(),
                                 };
-                                ui.label(RichText::new(servers).size(12.0).color(t::FAINT));
+                                ui.label(RichText::new(servers).size(12.0).color(t::faint()));
                                 if let Some(s) = state {
                                     ui.label(RichText::new(match s.link {
                                         Link::Online => format!("Connected · {} folders", s.folders.len()),
@@ -1669,14 +1755,14 @@ impl MailApp {
                         });
                         if self.senders_open == Some(a.id) {
                             ui.add_space(8.0);
-                            ui.label(RichText::new("Gmail filters made by MailALM (a sender's address, to Spam, to the Trash, or never to Spam). Other filters are left alone, in Gmail's settings.").size(11.5).color(t::FAINT));
+                            ui.label(RichText::new("Gmail filters made by MailALM (a sender's address, to Spam, to the Trash, or never to Spam). Other filters are left alone, in Gmail's settings.").size(11.5).color(t::faint()));
                             ui.add_space(4.0);
                             match state.and_then(|s| s.sender_rules.as_ref()) {
                                 None => {
-                                    ui.label(RichText::new("Reading Gmail's filters…").size(12.0).color(t::MUTED));
+                                    ui.label(RichText::new("Reading Gmail's filters…").size(12.0).color(t::muted()));
                                 }
                                 Some(rules) if rules.is_empty() => {
-                                    ui.label(RichText::new("No sender is blocked or allowed. Use Junk, Block sender on a message.").size(12.0).color(t::MUTED));
+                                    ui.label(RichText::new("No sender is blocked or allowed. Use Junk, Block sender on a message.").size(12.0).color(t::muted()));
                                 }
                                 Some(rules) => {
                                     for r in rules {
@@ -1687,7 +1773,7 @@ impl MailApp {
                                                 SenderRuleKind::NeverSpam => "allowed: never to Spam",
                                             };
                                             ui.label(RichText::new(&r.address).size(12.5));
-                                            ui.label(RichText::new(what).size(12.0).color(t::MUTED));
+                                            ui.label(RichText::new(what).size(12.0).color(t::muted()));
                                             if ui.small_button("Remove").clicked() {
                                                 sender_command = Some((a.id, SenderCommand::Remove(r.id.clone())));
                                             }
@@ -1703,11 +1789,15 @@ impl MailApp {
                     add = true;
                 }
                 self.writing_settings(ui);
+                self.rules_settings(ui);
+                self.porting_settings(ui);
+                self.mcp_settings(ui);
+                self.appearance_settings(ui);
                 ui.add_space(20.0);
-                ui.label(RichText::new("ABOUT").size(11.0).strong().color(t::FAINT));
+                ui.label(RichText::new("ABOUT").size(11.0).strong().color(t::faint()));
                 ui.add_space(6.0);
-                ui.label(RichText::new(format!("MailALM {} · MIT OR Apache-2.0", env!("CARGO_PKG_VERSION"))).color(t::MUTED));
-                ui.label(RichText::new("Passwords and Microsoft and Google sign-ins are kept in the Windows Credential Manager. The mail cache is in your local application data folder.").size(12.0).color(t::FAINT));
+                ui.label(RichText::new(format!("MailALM {} · MIT OR Apache-2.0", env!("CARGO_PKG_VERSION"))).color(t::muted()));
+                ui.label(RichText::new("Passwords and Microsoft and Google sign-ins are kept in the Windows Credential Manager. The mail cache is in your local application data folder.").size(12.0).color(t::faint()));
             });
         });
         if back {
@@ -1796,7 +1886,11 @@ impl MailApp {
                 ui.set_width(420.0);
                 ui.heading("Delete for good?");
                 ui.add_space(6.0);
-                ui.label("The message is removed from the server. It cannot be brought back.");
+                if key.account == LOCAL {
+                    ui.label("The message is removed from this PC. It cannot be brought back.");
+                } else {
+                    ui.label("The message is removed from the server. It cannot be brought back.");
+                }
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("Delete").clicked() {
@@ -1814,7 +1908,7 @@ impl MailApp {
                 self.confirm_delete = None;
                 if yes {
                     self.select_after_removal(&key);
-                    self.engine.send(key.account, Command::Apply(Change::Delete { folder: key.folder.clone(), uids: vec![key.uid] }));
+                    self.send(key.account, Command::Apply(Change::Delete { folder: key.folder.clone(), uids: vec![key.uid] }));
                     self.drop_hit(&key);
                 }
             }
@@ -1841,18 +1935,18 @@ impl MailApp {
         egui::Panel::bottom("status-bar")
             .exact_size(26.0)
             .resizable(false)
-            .frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(14, 0)))
+            .frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(14, 0)))
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.label(RichText::new(format!("Items: {items} · Unread: {unread}")).size(12.0).color(t::FAINT));
+                    ui.label(RichText::new(format!("Items: {items} · Unread: {unread}")).size(12.0).color(t::faint()));
                     if let Some(text) = activity {
                         ui.add_space(12.0);
                         ui.spinner();
-                        ui.label(RichText::new(text).size(12.0).color(t::MUTED));
+                        ui.label(RichText::new(text).size(12.0).color(t::muted()));
                     }
                     if let Some((text, problem)) = notice {
                         ui.add_space(12.0);
-                        let label = ui.add(egui::Label::new(RichText::new(&text).size(12.0).color(if problem { t::DANGER } else { t::ACCENT_TEXT })).truncate().sense(Sense::click()));
+                        let label = ui.add(egui::Label::new(RichText::new(&text).size(12.0).color(if problem { t::danger() } else { t::accent_text() })).truncate().sense(Sense::click()));
                         if label.on_hover_text("Click to dismiss").clicked() {
                             self.notice = None;
                         }
@@ -1860,7 +1954,7 @@ impl MailApp {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         for (name, color, link) in accounts.iter().rev() {
                             ui.add_space(10.0);
-                            ui.label(RichText::new(name).size(12.0).color(t::FAINT));
+                            ui.label(RichText::new(name).size(12.0).color(t::faint()));
                             let (r, _) = ui.allocate_exact_size(Vec2::splat(7.0), Sense::hover());
                             ui.painter().circle_filled(r.center(), 3.5, *color);
                             let (r, _) = ui.allocate_exact_size(Vec2::splat(7.0), Sense::hover());

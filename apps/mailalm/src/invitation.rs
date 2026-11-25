@@ -117,19 +117,19 @@ impl Pim {
         let all = sources(&self.data, cx.ws);
         let mut actions: Vec<Action> = Vec::new();
         ui.add_space(10.0);
-        Frame::new().fill(t::RAISED).stroke(Stroke::new(1.0, t::ACCENT)).corner_radius(8).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+        Frame::new().fill(t::raised()).stroke(Stroke::new(1.0, t::accent())).corner_radius(8).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             let Some(state) = self.invitations.get_mut(&k) else { return };
             let r = match state {
                 InvitationState::Loading => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("Reading the invitation…").color(t::MUTED));
+                        ui.label(RichText::new("Reading the invitation…").color(t::muted()));
                     });
                     return;
                 }
                 InvitationState::Failed(e) => {
-                    ui.label(RichText::new(format!("This message carries a calendar MailALM could not read: {e}")).color(t::WARN));
+                    ui.label(RichText::new(format!("This message carries a calendar MailALM could not read: {e}")).color(t::warn()));
                     return;
                 }
                 InvitationState::Ready(r) => r,
@@ -146,11 +146,11 @@ impl Pim {
                 Method::Counter => "New time proposed",
                 _ => "Calendar",
             };
-            ui.label(RichText::new(heading.to_uppercase()).size(11.0).strong().color(t::ACCENT_TEXT));
+            ui.label(RichText::new(heading.to_uppercase()).size(11.0).strong().color(t::accent_text()));
             ui.label(RichText::new(if ev.title.is_empty() { "(no title)" } else { ev.title.as_str() }).size(16.0).strong());
             ui.label(time::span(ev.start, ev.end, ev.all_day));
             if let Some(rule) = &ev.recurrence {
-                ui.label(RichText::new(repeat_text(rule)).size(12.0).color(t::MUTED));
+                ui.label(RichText::new(repeat_text(rule)).size(12.0).color(t::muted()));
             }
             if !ev.location.is_empty() {
                 ui.label(format!("Where: {}", ev.location));
@@ -171,16 +171,16 @@ impl Pim {
             if !ev.attendees.is_empty() {
                 let names: Vec<String> = ev.attendees.iter().take(6).map(|a| if a.name.is_empty() { a.email.clone() } else { a.name.clone() }).collect();
                 let more = if ev.attendees.len() > 6 { format!(" and {} more", ev.attendees.len() - 6) } else { String::new() };
-                ui.label(RichText::new(format!("Guests: {}{more}", names.join(", "))).size(12.0).color(t::MUTED));
+                ui.label(RichText::new(format!("Guests: {}{more}", names.join(", "))).size(12.0).color(t::muted()));
             }
-            ui.label(RichText::new(format!("Shows as {}", busy_label(ev.busy).to_lowercase())).size(12.0).color(t::FAINT));
+            ui.label(RichText::new(format!("Shows as {}", busy_label(ev.busy).to_lowercase())).size(12.0).color(t::faint()));
 
             // What it changes, for an update of a meeting already in the calendar.
             if let (Method::Request, Some(old)) = (method, &existing) {
                 let diff = changes(old, &ev);
                 if !diff.is_empty() {
                     ui.add_space(4.0);
-                    ui.label(RichText::new("What changes:").color(t::WARN));
+                    ui.label(RichText::new("What changes:").color(t::warn()));
                     for d in diff {
                         ui.label(RichText::new(format!("• {d}")).size(12.0));
                     }
@@ -193,9 +193,9 @@ impl Pim {
                 let clashes = mailalm_engine::agenda::clashes(&all, a, b, &ev.uid, &TzRules);
                 ui.add_space(4.0);
                 if clashes.is_empty() {
-                    ui.label(RichText::new("No clash in your calendars, all accounts.").size(12.5).color(t::OK));
+                    ui.label(RichText::new("No clash in your calendars, all accounts.").size(12.5).color(t::ok()));
                 } else {
-                    ui.label(RichText::new(format!("Clashes with {} event{}:", clashes.len(), if clashes.len() > 1 { "s" } else { "" })).color(t::WARN));
+                    ui.label(RichText::new(format!("Clashes with {} event{}:", clashes.len(), if clashes.len() > 1 { "s" } else { "" })).color(t::warn()));
                     for c in clashes.iter().take(8) {
                         ui.label(RichText::new(format!("• {} — {} · {}", c.title, time::span(c.start, c.end, false), cx.name(c.account))).size(12.0));
                     }
@@ -203,13 +203,13 @@ impl Pim {
             }
             ui.add_space(8.0);
             if let Some(done) = &r.done {
-                ui.label(RichText::new(done.as_str()).color(t::OK));
+                ui.label(RichText::new(done.as_str()).color(t::ok()));
                 return;
             }
             let mine = existing.as_ref().and_then(|e| e.my_response).or_else(|| ev.attendee(&me).map(|a| a.response));
             match method {
                 Method::Request if i_organize => {
-                    ui.label(RichText::new("You organize this meeting.").color(t::MUTED));
+                    ui.label(RichText::new("You organize this meeting.").color(t::muted()));
                 }
                 Method::Request => {
                     if let Some(m) = mine.filter(|m| *m != Response::NeedsAction) {
@@ -220,7 +220,7 @@ impl Pim {
                             actions.push(Action::Apply(Method::Request));
                         }
                     } else if existing.is_some() {
-                        ui.label(RichText::new("The provider has updated the calendar already.").size(12.0).color(t::FAINT));
+                        ui.label(RichText::new("The provider has updated the calendar already.").size(12.0).color(t::faint()));
                     }
                     ui.horizontal(|ui| {
                         for (label, answer) in [("Accept", Response::Accepted), ("Tentative", Response::Tentative), ("Decline", Response::Declined)] {
@@ -252,9 +252,9 @@ impl Pim {
                             }
                         });
                         if let Some(p) = &r.problem {
-                            ui.label(RichText::new(p.as_str()).color(t::DANGER));
+                            ui.label(RichText::new(p.as_str()).color(t::danger()));
                         }
-                        ui.label(RichText::new("Your answer is tentative meanwhile; the proposal always goes to the organizer.").size(11.5).color(t::FAINT));
+                        ui.label(RichText::new("Your answer is tentative meanwhile; the proposal always goes to the organizer.").size(11.5).color(t::faint()));
                     }
                 }
                 Method::Cancel => match &existing {
@@ -265,7 +265,7 @@ impl Pim {
                     }
                     Some(_) => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Remove this meeting from your calendar?").color(t::WARN));
+                            ui.label(RichText::new("Remove this meeting from your calendar?").color(t::warn()));
                             if ui.button("Remove").clicked() {
                                 actions.push(Action::Apply(Method::Cancel));
                             }
@@ -275,7 +275,7 @@ impl Pim {
                         });
                     }
                     None => {
-                        ui.label(RichText::new("It is not in your calendar.").color(t::FAINT));
+                        ui.label(RichText::new("It is not in your calendar.").color(t::faint()));
                     }
                 },
                 Method::Reply => {
@@ -289,13 +289,13 @@ impl Pim {
                             }
                         }
                         (Some(_), Some(Provider::Outlook | Provider::Gmail)) => {
-                            ui.label(RichText::new("The provider records the answer in the calendar by itself.").size(12.0).color(t::FAINT));
+                            ui.label(RichText::new("The provider records the answer in the calendar by itself.").size(12.0).color(t::faint()));
                         }
                         _ => {}
                     }
                 }
                 Method::Counter => {
-                    ui.label(RichText::new("To take this time, change the meeting's time in the calendar: its guests are told.").size(12.0).color(t::FAINT));
+                    ui.label(RichText::new("To take this time, change the meeting's time in the calendar: its guests are told.").size(12.0).color(t::faint()));
                 }
                 _ => {}
             }

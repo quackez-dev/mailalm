@@ -228,23 +228,23 @@ impl AccountForm {
                 }
                 _ => "Vidéotron, Bell, Hotmail, Outlook.com, Gmail or any IMAP account. MailALM signs in once to check the settings before keeping them.",
             };
-            ui.label(RichText::new(intro).size(12.0).color(t::MUTED));
+            ui.label(RichText::new(intro).size(12.0).color(t::muted()));
             ui.add_space(10.0);
             ui.add_enabled_ui(!busy, |ui| self.fields(ui));
             if let Some(why) = self.unsupported() {
                 ui.add_space(6.0);
-                ui.label(RichText::new(why).color(t::WARN));
+                ui.label(RichText::new(why).color(t::warn()));
             }
             if let Some(e) = &self.error {
                 ui.add_space(6.0);
-                ui.label(RichText::new(e).color(t::DANGER));
+                ui.label(RichText::new(e).color(t::danger()));
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 if busy {
                     ui.spinner();
                     let waiting = if browser.is_some() { "Waiting for the sign-in in your browser…" } else { "Signing in…" };
-                    ui.label(RichText::new(waiting).color(t::MUTED));
+                    ui.label(RichText::new(waiting).color(t::muted()));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some(provider) = browser {
@@ -330,7 +330,7 @@ impl AccountForm {
             ui.label(
                 RichText::new("Every connection is encrypted: TLS, or STARTTLS which MailALM requires. There is no unencrypted option.")
                     .size(11.5)
-                    .color(t::FAINT),
+                    .color(t::faint()),
             );
         }
     }

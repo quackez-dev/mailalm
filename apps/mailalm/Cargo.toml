@@ -21,6 +21,10 @@ mailalm-safety = { workspace = true }
 mailalm-compose = { workspace = true }
 mailalm-antidote = { workspace = true }
 mailalm-net = { workspace = true }
+# The MCP access (phase 9): the control channel's server side, its adapter and its journal.
+mailalm-control = { workspace = true }
+# Import and export (phase 10): .eml, .mbox, PDF, Outlook data files.
+mailalm-porting = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = { workspace = true }
