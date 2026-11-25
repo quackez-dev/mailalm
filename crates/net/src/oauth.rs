@@ -28,14 +28,22 @@ use crate::http::{self, Request, form, pct};
 use crate::{NetError, Result, clip};
 
 /// What MailALM asks Microsoft for: reading and changing mail, sending it, the mailbox's
-/// settings (automatic replies, blocked senders), who the user is, and a refresh token.
+/// settings (automatic replies, blocked senders), who the user is, the calendars (events,
+/// invitations), Microsoft To Do's tasks and the contacts, and a refresh token. A token from
+/// before the calendar, tasks and contacts were asked for can't be refreshed with this scope:
+/// the account signs in again.
 pub const MICROSOFT_SCOPE: &str = "https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.ReadWrite \
-https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/MailboxSettings.ReadWrite offline_access";
+https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/MailboxSettings.ReadWrite \
+https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Tasks.ReadWrite \
+https://graph.microsoft.com/Contacts.ReadWrite offline_access";
 
 /// What MailALM asks Google for: reading, changing and sending mail, short of deleting it for
-/// good (`gmail.modify`), and the mailbox's basic settings, its filters (`gmail.settings.basic`).
-/// Google's consent screen lets the user untick either: see [`Tokens::granted`].
-pub const GOOGLE_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic";
+/// good (`gmail.modify`), the mailbox's basic settings, its filters (`gmail.settings.basic`), the
+/// calendars (`calendar`: events, invitations, Meet links), Google Tasks (`tasks`), and the
+/// contacts, read only (`contacts.readonly`: they complete addresses). Google's consent screen
+/// lets the user untick any of them: see [`Tokens::granted`].
+pub const GOOGLE_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic \
+https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/tasks https://www.googleapis.com/auth/contacts.readonly";
 
 /// What the browser sign-in asks for besides the provider's scope: who signed in (an ID token).
 /// Refreshing asks for the mail permissions alone.

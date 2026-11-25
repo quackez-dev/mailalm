@@ -230,6 +230,12 @@ pub fn clean_file_name(name: &str) -> String {
     cleaned.trim().trim_end_matches(['.', ' ']).to_owned()
 }
 
+/// HTML from a server (an event's description from Google Calendar) as the text shown: converted
+/// as a message's HTML part is ([`MAX_HTML`] at most), then cleaned ([`clean_text`]).
+pub fn text_of_html(html: &str) -> String {
+    clean_text(&html_to_text(html))
+}
+
 /// HTML as text, with html2text; a body over [`MAX_HTML`] is cut first.
 fn html_to_text(html: &str) -> String {
     let (html, cut) = if html.len() > MAX_HTML {

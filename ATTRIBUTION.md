@@ -38,6 +38,11 @@ file starts with a comment naming its origin and what changed. The copy was read
 | `crates/net/src/oauth/tests.rs` | the tests in `crates/net/src/oauth.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/graph.rs` | `crates/net/src/exchange/graph.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/graph/convert.rs` | `flags` from `crates/net/src/exchange/graph/flags.rs`, `address` from `crates/net/src/exchange/graph.rs` | MIT OR Apache-2.0 |
+| `crates/net/src/graph/pim/convert.rs` | `rrule_of` and `recurrence_of` from `crates/net/src/exchange/graph_pim.rs` (the rest is MailALM's own) | MIT OR Apache-2.0 |
+| `crates/model/src/pim/recurrence.rs` | `crates/model/src/pim/ical/recurrence.rs` | MIT OR Apache-2.0 |
+| `crates/model/src/pim/ical.rs` | content lines, escaping, folding, dates and durations from `crates/model/src/pim/ical.rs`; a `VTIMEZONE`'s offsets from `crates/model/src/pim/ical/zones.rs` | MIT OR Apache-2.0 |
+
+The phase 6 copies (calendars, recurrences, iCalendar) were audited in `audits/mailalm/reprise-pim.md`.
 
 The test certificates and keys in `crates/net/src/stream/trust/test_certs.rs` were made up for
 MailCraft's tests; they are compiled into tests only and are used nowhere else.

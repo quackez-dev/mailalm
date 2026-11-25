@@ -52,7 +52,25 @@ mise à jour automatique, pas de rapport de plantage, pas d'autoconfiguration pa
 - L'API Gmail ne donne aucun lien à suivre (la pagination passe par des jetons) : MailALM ne contacte que les
   adresses ci-dessus.
 
-## Phases suivantes
+## Phase 6 : agenda, tâches et contacts
 
-L'agenda, les tâches et les contacts (phase 6) ajouteront les API Google Agenda, Tasks et People, et l'agenda de
-Graph : la liste sera complétée à leur arrivée.
+| Domaine | Port | Protocole | Quand |
+|---|---|---|---|
+| `www.googleapis.com` | 443 (TLS) | HTTPS (API Google Agenda v3, chemin `/calendar/v3`) | Compte Gmail : agendas, événements, invitations (réponses), création de liens Google Meet |
+| `tasks.googleapis.com` | 443 (TLS) | HTTPS (API Google Tasks v1) | Compte Gmail : listes de tâches et tâches |
+| `people.googleapis.com` | 443 (TLS) | HTTPS (API People v1), lecture seule | Compte Gmail : contacts, pour compléter les adresses |
+| `graph.microsoft.com` | 443 (TLS) | HTTPS (Microsoft Graph v1.0) | Compte Outlook : en plus du courriel, agendas et événements, réponses aux invitations, réunions Teams, tâches Microsoft To Do, contacts |
+
+- Aucun nouveau domaine pour les comptes Outlook : Graph sert aussi l'agenda (`/me/calendars`, `/me/events`), To
+  Do (`/me/todo/lists`) et les contacts (`/me/contacts`), sur `graph.microsoft.com`.
+- Permissions supplémentaires demandées :
+  - Microsoft : `Calendars.ReadWrite`, `Tasks.ReadWrite`, `Contacts.ReadWrite` (déléguées) ;
+  - Google : `calendar`, `tasks`, `contacts.readonly` (les contacts Google ne servent qu'à l'autocomplétion :
+    MailALM ne les modifie pas).
+  Un compte connecté avant la phase 6 doit se reconnecter pour les accorder.
+- Les liens Meet et Teams sont créés par Google et Microsoft eux-mêmes, sur leurs serveurs. MailALM garde le lien
+  reçu pour l'afficher ; il ne l'ouvre jamais seul.
+- Comme pour l'API Gmail, les API Google donnent des jetons de pagination, jamais des liens à suivre. Les liens de
+  pagination de Graph ne sont suivis que s'ils pointent vers `https://graph.microsoft.com/`.
+- Comptes IMAP (Vidéotron, Bell) : les invitations partent par courriel (fichier `.ics`), sur les serveurs SMTP
+  déjà listés. Aucun autre domaine.

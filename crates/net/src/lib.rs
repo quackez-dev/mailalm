@@ -1,5 +1,5 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/lib.rs. MIT OR Apache-2.0.
-// Changed: only IMAP, SMTP, Microsoft and Google sign-in, Graph and Gmail mail and TLS are left (the Gmail client is MailALM's own); the error type is reduced to what they need, holds text only, and can blank out a secret.
+// Changed: only IMAP, SMTP, Microsoft and Google sign-in, Graph and Gmail mail and TLS are left (the Gmail client is MailALM's own; so are the Graph and Google calendar, task and contact clients of phase 6); the error type is reduced to what they need, holds text only, and can blank out a secret.
 
 //! MailALM's network layer, all of it blocking (it runs on a worker thread):
 //!
@@ -13,6 +13,10 @@
 //!   by delta query, messages as MIME, marks, moves, deletions, junk reports, sending.
 //! * [`gmail::GmailClient`]: Gmail through the Gmail API over HTTPS: labels, message ids by label,
 //!   header fields, messages as MIME, label changes, the bin, sending, block and allow filters.
+//! * The calendars, tasks and contacts (phase 6): [`graph::GraphClient`] for Outlook.com
+//!   (calendars and events, invitations, Teams links, Microsoft To Do, contacts) and
+//!   [`google::GoogleClient`] for a Gmail account (Google Calendar with Meet links, Google Tasks,
+//!   the People API's contacts).
 //!
 //! Every connection is TLS, checked against Mozilla's roots and the system's, less what Windows
 //! distrusts. There is no exception path: no certificate trusted by hand, no clear text. A password
@@ -22,6 +26,7 @@
 
 mod base64;
 pub mod gmail;
+pub mod google;
 pub mod graph;
 mod http;
 mod imap;

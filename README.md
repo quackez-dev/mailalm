@@ -26,9 +26,11 @@ The full plan, in French: [PLAN.md](PLAN.md). Ideas kept for later: [IDEES.md](I
 
 ```
 apps/mailalm/     the desktop app (egui)
-crates/model/     accounts, servers, folders, summaries, search queries, workspace rules (pure, tested)
+crates/model/     accounts, servers, folders, summaries, search queries, workspace rules; calendars,
+                  events, recurrences, tasks, contacts, iCalendar invitations (pure, tested)
 crates/mime/      reading messages and writing outgoing mail (mail-parser, mail-builder, html2text)
-crates/net/       IMAP, TLS, SMTP, Microsoft sign-in and Graph, adapted from MailCraft (see ATTRIBUTION.md)
+crates/net/       IMAP, TLS, SMTP, Microsoft and Google sign-in, Graph, Gmail, Google Calendar, Tasks
+                  and People, partly adapted from MailCraft (see ATTRIBUTION.md)
 crates/store/     the local cache, one folder per account
 crates/engine/    one worker thread per account (IMAP or Outlook): cache first, then the server; offline changes
 docs/             the domains MailALM contacts; registering MailALM with Microsoft
