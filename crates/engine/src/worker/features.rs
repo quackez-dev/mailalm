@@ -36,6 +36,34 @@ impl MailWorker for Worker {
         &self.store
     }
 
+    /// `APPEND` to the Drafts folder with `\Draft`; the draft saved before (found by its
+    /// Message-ID) is then deleted. The draft is named by its Message-ID.
+    fn store_draft(&mut self, raw: &[u8], message_id: &str, replace: Option<&str>) -> Result<String, String> {
+        let drafts = self.folder_with_role(FolderRole::Drafts).ok_or("this account has no Drafts folder on its server")?;
+        let appended = match self.connect() {
+            Some(s) => s.append(&drafts.wire, &["\Draft", "\Seen"], raw),
+            None => return Err("offline".to_owned()),
+        };
+        if let Err(e) = appended {
+            return Err(self.failed(&e));
+        }
+        if let Some(old) = replace.filter(|old| *old != message_id)
+            && let Err(e) = self.drop_draft(old)
+        {
+            log::warn!("the draft saved before could not be deleted: {e}");
+        }
+        Ok(message_id.to_owned())
+    }
+
+    fn drop_draft(&mut self, draft: &str) -> Result<(), String> {
+        let drafts = self.folder_with_role(FolderRole::Drafts).ok_or("this account has no Drafts folder on its server")?;
+        let uids = self.in_folder(&drafts.path, |s| s.find_message_id(draft))?;
+        if uids.is_empty() {
+            return Ok(());
+        }
+        self.in_folder(&drafts.path, |s| s.delete(&uids))
+    }
+
     fn tell(&self, e: Event) {
         self.emit(e);
     }

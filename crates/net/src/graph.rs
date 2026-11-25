@@ -350,6 +350,28 @@ impl GraphClient {
         }
     }
 
+    /// Save a MIME message as a draft (`POST /me/messages`, its source in base64 as
+    /// `text/plain`): Graph puts it in Drafts, unsent. Its immutable id is returned, to replace
+    /// it ([`GraphClient::delete`] then a new one) or delete it later. Not sent again on its own
+    /// once it went out: the user saves again.
+    pub fn create_draft(&mut self, raw: &[u8]) -> Result<String> {
+        if raw.is_empty() {
+            return Err(NetError::Invalid("an empty message".into()));
+        }
+        if raw.len() > MAX_MIME {
+            return Err(NetError::TooLarge(format!("the message is larger than {} MB", MAX_MIME >> 20)));
+        }
+        let req = Request::post(&format!("{}/me/messages", self.base), "text/plain", crate::base64::encode(raw).into_bytes(), MAX_JSON);
+        let resp = self.exchange(req, "application/json", PREFER, &[429, 503], false).map_err(|f| self.hide(f.error))?;
+        check(&resp).map_err(|e| self.hide(e))?;
+        let v = json_of(&resp)?;
+        v.get("id")
+            .and_then(Value::as_str)
+            .filter(|id| convert::id_ok(id))
+            .map(str::to_owned)
+            .ok_or_else(|| NetError::Protocol("Microsoft Graph didn't give the draft's id".into()))
+    }
+
     /// The same change for each message, through `$batch`. `gone_ok`: a message that is no
     /// longer there (404) counts as done.
     fn each(&mut self, ids: &[String], gone_ok: bool, call: impl Fn(&str) -> Call) -> Result<()> {

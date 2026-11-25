@@ -28,6 +28,20 @@ pub(crate) fn find_port() -> Result<u16, Error> {
     }
 }
 
+/// Whether Antidote's connector is installed, without starting anything: the registry names its
+/// folder, and `AgentConnectixConsole.exe` is a file right in it (the checks [`find_port`] makes
+/// before it runs the program). The compose window shows Antidote's buttons only then.
+pub fn installed() -> Result<(), Error> {
+    #[cfg(windows)]
+    {
+        windows::console_path().map(drop)
+    }
+    #[cfg(not(windows))]
+    {
+        Err(Error::Unavailable)
+    }
+}
+
 /// The port in the console's answer `{"port": N}`, if N is in 1..=65535.
 #[cfg(any(windows, test))]
 fn port_in(answer: &serde_json::Value) -> Option<u16> {
@@ -74,7 +88,7 @@ mod windows {
         Err(Error::Console("AgentConnectixConsole gave no port".into()))
     }
 
-    fn console_path() -> Result<PathBuf, Error> {
+    pub(super) fn console_path() -> Result<PathBuf, Error> {
         let key = windows_registry::LOCAL_MACHINE
             .open(KEY)
             .map_err(|_| Error::NotInstalled(format!("no registry key HKLM\\{KEY}")))?;
@@ -242,5 +256,6 @@ mod tests {
     #[test]
     fn unavailable_elsewhere() {
         assert!(matches!(find_port(), Err(Error::Unavailable)));
+        assert!(matches!(installed(), Err(Error::Unavailable)));
     }
 }

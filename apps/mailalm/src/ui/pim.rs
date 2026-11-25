@@ -42,7 +42,7 @@ impl MailApp {
         }
         if let Some((account, person)) = self.pim.compose_to.take() {
             let me = self.me(account);
-            self.compose(account, Outgoing { from: me, to: vec![person], ..Outgoing::default() });
+            self.compose(account, Outgoing { from: me, to: vec![person], ..Outgoing::default() }, Some(crate::compose::new_document()));
         }
     }
 }

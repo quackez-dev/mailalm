@@ -4,8 +4,10 @@
 //!
 //! html5ever's tokenizer (already built for html2text) reads the markup and decodes the
 //! character references; the tree is rebuilt here, tolerantly, with caps on size and depth.
-//! Nothing is fetched: a picture is kept only when it is a `cid:` one the caller provides, and
-//! scripts, styles, frames, forms and embedded objects are dropped with their content.
+//! Nothing is fetched: a picture is kept only when it is a `cid:` one the caller provides (or,
+//! for a received message, one the caller fetched itself after the user asked: see
+//! [`import_message_html`], which lists the web pictures named), and scripts, styles, frames,
+//! forms and embedded objects are dropped with their content.
 
 use std::cell::RefCell;
 
@@ -28,6 +30,8 @@ const MAX_DEPTH: usize = 64;
 const MAX_TOKENS: usize = 400_000;
 /// The longest attribute value kept.
 const MAX_ATTR: usize = 4096;
+/// The most web pictures listed.
+const MAX_REMOTE: usize = 200;
 
 /// A token, as the builder needs it.
 enum Tok {
@@ -42,7 +46,7 @@ struct Sink {
 }
 
 /// The attributes the builder reads.
-const KEPT_ATTRS: [&str; 5] = ["href", "src", "style", "color", "alt"];
+const KEPT_ATTRS: [&str; 7] = ["href", "src", "style", "color", "alt", "width", "height"];
 
 impl TokenSink for Sink {
     type Handle = ();
@@ -157,13 +161,44 @@ struct Builder<'a> {
     space: Option<Format>,
     text_size: usize,
     provided: &'a [InlineImage],
+    /// Web pictures the caller fetched, by their address.
+    loaded: &'a [(String, InlineImage)],
     images: Vec<InlineImage>,
+    /// The web pictures named and not given.
+    remote: Vec<RemoteImage>,
     full: bool,
+}
+
+/// A picture a received message names by a web address (`<img src="https://…">`). Nothing is
+/// fetched here: the caller decides, and gives what it fetched back to [`import_message_html`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteImage {
+    /// The address as the message writes it (trimmed): `http:` or `https:` only.
+    pub url: String,
+    /// The size the message declares for it, in pixels (`width` and `height` attributes, or its
+    /// inline style; 0 when the style hides it).
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+/// A received message's HTML as a document, and the web pictures it names that were not given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Imported {
+    pub document: Document,
+    pub remote: Vec<RemoteImage>,
 }
 
 /// `html` (untrusted) as a document. `provided` are the pictures its `cid:` addresses may name
 /// (the related parts of the message); any other picture is dropped, and nothing is fetched.
 pub fn import_html(html: &str, provided: &[InlineImage]) -> Document {
+    import_message_html(html, provided, &[]).document
+}
+
+/// A received message's `html` (untrusted) as a document, for the reading pane: as
+/// [`import_html`], and the pictures in `loaded` (fetched by the caller, by their address) are
+/// shown where the message names them. The web pictures named and not in `loaded` are listed in
+/// [`Imported::remote`] (at most 200), with the size the message declares for them.
+pub fn import_message_html(html: &str, provided: &[InlineImage], loaded: &[(String, InlineImage)]) -> Imported {
     let mut end = html.len().min(MAX_IMPORT_HTML);
     while !html.is_char_boundary(end) {
         end -= 1;
@@ -184,7 +219,9 @@ pub fn import_html(html: &str, provided: &[InlineImage]) -> Document {
         space: None,
         text_size: 0,
         provided,
+        loaded,
         images: Vec::new(),
+        remote: Vec::new(),
         full: false,
     };
     for token in tokens {
@@ -202,7 +239,7 @@ pub fn import_html(html: &str, provided: &[InlineImage]) -> Document {
     while b.paragraphs.len() > 1 && b.paragraphs.last().is_some_and(|p| p.is_empty() && !p.kind.is_image()) {
         b.paragraphs.pop();
     }
-    Document::from_parts(b.paragraphs, b.images)
+    Imported { document: Document::from_parts(b.paragraphs, b.images), remote: b.remote }
 }
 
 impl Builder<'_> {
@@ -329,7 +366,7 @@ impl Builder<'_> {
                 self.finish(false);
                 return self.finish(true);
             }
-            "img" => return self.image(attr("src").unwrap_or(""), attr("alt").unwrap_or("")),
+            "img" => return self.image(attrs),
             "td" | "th" => {
                 // A new cell closes the one open in the same row.
                 self.close_open("td", &["tr", "table"]);
@@ -418,14 +455,20 @@ impl Builder<'_> {
         }
     }
 
-    /// A picture: kept only for a `cid:` the caller provides; else its alternative text.
-    fn image(&mut self, src: &str, alt: &str) {
-        let provided = self.provided;
-        let src = src.trim();
+    /// A picture: kept only for a `cid:` the caller provides, or a web address it fetched; else
+    /// its alternative text (and a web address is listed).
+    fn image(&mut self, attrs: &[(String, String)]) {
+        let attr = |key: &str| attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
+        let (provided, loaded) = (self.provided, self.loaded);
+        let src = attr("src").unwrap_or("").trim();
+        let alt = attr("alt").unwrap_or("");
         let cid = src.get(..4).filter(|s| s.eq_ignore_ascii_case("cid:")).and_then(|_| src.get(4..)).map(percent_decode);
-        if let Some(cid) = cid
-            && let Some(image) = provided.iter().find(|i| i.content_id == cid)
-        {
+        let found = match cid {
+            Some(cid) => provided.iter().find(|i| i.content_id == cid),
+            None if src.is_empty() => None,
+            None => loaded.iter().find(|(url, _)| url == src).map(|(_, image)| image),
+        };
+        if let Some(image) = found {
             self.finish(false);
             let mut p = Paragraph::image(&image.content_id);
             p.quote = self.new_paragraph().quote;
@@ -439,11 +482,47 @@ impl Builder<'_> {
             }
             return;
         }
+        if is_web(src) && self.remote.len() < MAX_REMOTE && !self.remote.iter().any(|r| r.url == src) {
+            let style = attr("style");
+            let hidden = style.is_some_and(|s| {
+                let s: String = s.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+                s.contains("display:none") || s.contains("visibility:hidden")
+            });
+            let (width, height) = if hidden {
+                (Some(0), Some(0))
+            } else {
+                (dimension(attr("width"), style, "width"), dimension(attr("height"), style, "height"))
+            };
+            self.remote.push(RemoteImage { url: src.to_owned(), width, height });
+        }
         let alt = alt.trim();
         if !alt.is_empty() && alt.chars().count() <= 100 {
             self.text(&format!("[{alt}]"));
         }
     }
+}
+
+/// Whether `src` is an `http:` or `https:` address.
+fn is_web(src: &str) -> bool {
+    let lower = src.get(..8).unwrap_or(src).to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
+}
+
+/// A picture's declared size on one side (`key`: `width` or `height`), in pixels: from its
+/// inline style first, else its attribute; `None` for a relative size or none.
+fn dimension(attr: Option<&str>, style: Option<&str>, key: &str) -> Option<u32> {
+    let px = |v: &str| {
+        let lower = v.trim().to_ascii_lowercase();
+        let number = lower.strip_suffix("px").unwrap_or(&lower).trim();
+        number.parse::<f32>().ok().filter(|n| n.is_finite() && *n >= 0.0).map(|n| n.min(1_000_000.0) as u32)
+    };
+    let from_style = style.and_then(|s| {
+        s.split(';').take(64).find_map(|decl| {
+            let (k, v) = decl.split_once(':')?;
+            if k.trim().eq_ignore_ascii_case(key) { px(v) } else { None }
+        })
+    });
+    from_style.or_else(|| attr.and_then(px))
 }
 
 /// `%XX` sequences decoded (a `cid:` address may be percent-encoded, RFC 2392).

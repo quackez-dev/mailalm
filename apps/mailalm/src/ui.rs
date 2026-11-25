@@ -1,31 +1,37 @@
 //! The main window, as the validated mockups draw it: title bar, command bar, folders (accounts
 //! in an accordion), message list, reading pane and status bar. IMAP accounts (phase 2), Outlook
 //! accounts through Microsoft Graph (phase 3) and Gmail accounts through the Gmail API (phase 4).
+//! The reading pane (`ui/reading.rs`), the compose windows and what waits to be sent
+//! (`ui/sending.rs`) and the writing settings (`ui/writing.rs`) have modules of their own.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use egui::{
     Align, Align2, Button, Color32, CornerRadius, FontId, Frame, Id, Key, Layout, Margin, Painter, Pos2, Rect, Response, RichText, ScrollArea,
     Sense, Stroke, TextEdit, Ui, Vec2, ViewportCommand, pos2, vec2,
 };
-use mailalm_engine::{Command, Engine, Link, SenderCommand, SenderRuleKind, SizeLimit};
-use mailalm_mime::{AttachmentInfo, Outgoing};
+use mailalm_engine::{Command, Engine, Link, SenderCommand, SenderRuleKind};
+use mailalm_mime::{Outgoing, format_person};
 use mailalm_model::{Account, AccountId, Change, Focus, FolderRole, NewMail, Person, Provider, Summary, Workspace, account_color};
 use mailalm_safety::files::TempFolder;
 
 use crate::accounts::{AccountForm, FormResult, Secret};
 use crate::agenda::{Ctx, Pim, PimPage};
-use crate::attachments::{self, Review, ReviewAction};
-use crate::compose::{Compose, ComposeAction};
+use crate::attachments::{Review, ReviewAction};
+use crate::compose::{self, Compose};
 use crate::icons::{self, Icon};
 use crate::mailbox::{Mailboxes, MessageKey, Outcome, Reading};
+use crate::reading::MessageView;
 use crate::settings::Settings;
 use crate::theme as t;
 use crate::time::{self, Group};
 use crate::window;
 
 mod pim;
+mod reading;
+mod sending;
+mod writing;
 
 /// Starting widths of the folder pane and the message list. The splitters between the three
 /// columns change them; the reading pane takes what is left.
@@ -117,11 +123,22 @@ pub struct MailApp {
     temp: TempFolder,
     /// Calendars, reminders, invitations, tasks and contacts (phase 6).
     pim: Pim,
+    /// The text of the message being read (its HTML converted, its pictures, its links).
+    message_view: Option<MessageView>,
+    next_view: u64,
+    /// A mailing list to leave, waiting for the user's confirmation.
+    leave_list: Option<reading::LeaveList>,
+    /// The undo delays, the scheduled messages.
+    sending: sending::Sending,
+    /// The writing settings being edited.
+    writing_page: writing::WritingPage,
 }
 
 impl MailApp {
     pub fn new(ctx: &egui::Context) -> Self {
         let (settings, problem) = Settings::load();
+        let (sending, schedule_problem) = sending::Sending::load();
+        let problem = problem.or(schedule_problem);
         let wake_ctx = ctx.clone();
         let zones: mailalm_engine::Zones = Arc::new(crate::zones::TzRules);
         let mut engine = Engine::new(Settings::cache_dir(), Arc::new(move || wake_ctx.request_repaint()), zones);
@@ -159,6 +176,11 @@ impl MailApp {
             reviewed: HashSet::new(),
             temp: TempFolder::new(Settings::cache_dir().join("open")),
             pim: Pim::new(),
+            message_view: None,
+            next_view: 0,
+            leave_list: None,
+            sending,
+            writing_page: writing::WritingPage::default(),
         }
     }
 
@@ -247,14 +269,20 @@ impl MailApp {
             let Some(e) = self.pim.take(e) else { continue };
             match self.boxes.apply(e) {
                 Outcome::None => {}
-                Outcome::Message { key, parsed } => {
+                Outcome::Message { key, parsed, html } => {
                     if let Some(r) = &mut self.reading
                         && r.key == key
                     {
                         r.parsed = Some(parsed);
+                        r.html = html;
                         r.error = None;
+                        if self.message_view.as_ref().is_some_and(|v| v.key == key) {
+                            // Opened again: shown anew.
+                            self.message_view = None;
+                        }
                     }
                 }
+                Outcome::Draft { compose, result } => self.draft_saved(compose, result),
                 Outcome::MessageUnavailable { key, reason } => {
                     if let Some(r) = &mut self.reading
                         && r.key == key
@@ -268,7 +296,8 @@ impl MailApp {
                     // Nothing typed is lost: the message comes back in its window.
                     let id = self.next_compose;
                     self.next_compose += 1;
-                    self.composes.push(Compose::new(id, account, &message, Some(text.clone())));
+                    let plain = message.html.is_none();
+                    self.composes.push(Compose::new(id, account, &message, Some(text.clone()), None, plain));
                     self.warn(text);
                 }
                 Outcome::Attachment { key, index, result } => {
@@ -414,7 +443,7 @@ impl MailApp {
             self.engine.send(key.account, Command::Apply(Change::SetSeen { folder: key.folder.clone(), uids: vec![key.uid], seen: true }));
             self.mark_hit(&key, |s| s.flags.seen = true);
         }
-        self.reading = Some(Reading { key: key.clone(), parsed: None, error: None });
+        self.reading = Some(Reading { key: key.clone(), parsed: None, html: None, error: None });
         self.selected = Some(key);
     }
 
@@ -611,16 +640,18 @@ impl MailApp {
         Person { name: String::new(), address: self.account(id).map(|a| a.address.clone()).unwrap_or_default() }
     }
 
-    fn compose(&mut self, account: AccountId, o: Outgoing) {
-        let id = self.next_compose;
-        self.next_compose += 1;
-        self.composes.push(Compose::new(id, account, &o, None));
-        self.create_menu = None;
-    }
-
     fn new_mail_from(&mut self, account: AccountId) {
         let me = self.me(account);
-        self.compose(account, Outgoing { from: me, ..Outgoing::default() });
+        self.compose(account, Outgoing { from: me, ..Outgoing::default() }, Some(compose::new_document()));
+    }
+
+    /// A new message from one of the account's templates.
+    fn new_mail_from_template(&mut self, account: AccountId, index: usize) {
+        let Some(tpl) = self.settings.writing(account).and_then(|w| w.templates.get(index)).cloned() else { return };
+        let me = self.me(account);
+        let mut doc = mailalm_compose::import_html(&tpl.html, &[]);
+        doc.paragraphs.push(mailalm_compose::Paragraph::default());
+        self.compose(account, Outgoing { from: me, subject: tpl.subject, ..Outgoing::default() }, Some(doc));
     }
 
     fn reply(&mut self, all: bool, forward: bool) {
@@ -635,12 +666,27 @@ impl MailApp {
         let account = r.key.account;
         let date = parsed.date.or_else(|| self.summary_of(&r.key).map(|s| s.date)).unwrap_or(0);
         let me = self.me(account);
-        let o = if forward {
-            mailalm_mime::forward(parsed, &me, &time::long(date))
+        let long = time::long(date);
+        // The original's HTML, as the reading pane has it: quoted with its formatting.
+        let html = self.message_view.as_ref().filter(|v| v.key == r.key).and_then(MessageView::html);
+        let original = compose::document_of(&parsed.text, html);
+        let (o, doc) = if forward {
+            let mut header = vec![
+                "---------- Forwarded message ----------".to_owned(),
+                format!("From: {}", format_person(&parsed.from)),
+                format!("Date: {long}"),
+                format!("Subject: {}", parsed.subject),
+                format!("To: {}", people(&parsed.to)),
+            ];
+            if !parsed.cc.is_empty() {
+                header.push(format!("Cc: {}", people(&parsed.cc)));
+            }
+            (mailalm_mime::forward(parsed, &me, &long), compose::forward_document(&header, original))
         } else {
-            mailalm_mime::reply(parsed, &me, all, &format!("On {},", time::long(date)))
+            let attribution = format!("On {long}, {} wrote:", parsed.from.display());
+            (mailalm_mime::reply(parsed, &me, all, &format!("On {long},")), compose::reply_document(&attribution, original))
         };
-        self.compose(account, o);
+        self.compose(account, o, Some(doc));
     }
 
     // ---- search ----
@@ -737,6 +783,7 @@ impl MailApp {
             self.reading = None;
         }
         self.composes.retain(|c| c.account != id);
+        self.forget_sending(id);
         if self.review.as_ref().is_some_and(|r| r.key.account == id) {
             self.review = None;
         }
@@ -773,6 +820,7 @@ impl eframe::App for MailApp {
         self.create_menu(ui);
         self.dialogs(ui);
         self.compose_windows(ui);
+        self.sending_tick(ui);
         self.pim_windows(ui);
         window::resize_edges(ui);
     }
@@ -1088,6 +1136,15 @@ impl MailApp {
         let mut from: Option<AccountId> = None;
         let mut chosen: Option<String> = None;
         let mut create: Option<&'static str> = None;
+        let mut template: Option<(AccountId, usize)> = None;
+        // The templates of the focused account, or of every account in the unified inbox.
+        let templates: Vec<(AccountId, usize, String, String)> = accounts
+            .iter()
+            .filter(|(id, ..)| focused.is_none_or(|f| f == *id))
+            .flat_map(|(id, name, ..)| {
+                self.settings.writing(*id).map(|w| w.templates.iter().enumerate().map(|(i, tpl)| (*id, i, tpl.name.clone(), name.clone())).collect::<Vec<_>>()).unwrap_or_default()
+            })
+            .collect();
         let area = egui::Area::new(Id::unique("mailalm-create-menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(anchor + vec2(0.0, 4.0))
@@ -1117,8 +1174,14 @@ impl MailApp {
                         if accounts.is_empty() && menu_row(ui, None, "Add an account…", "", "", false).clicked() {
                             chosen = Some("add".to_owned());
                         }
-                        if menu_row(ui, None, "New mail from a template…", "", "", false).clicked() {
-                            chosen = Some("Templates arrive in phase 7.".to_owned());
+                        for (id, i, name, account) in &templates {
+                            let detail = if focused.is_none() { account.as_str() } else { "" };
+                            if menu_row(ui, None, &format!("From the template {name}"), detail, "", false).clicked() {
+                                template = Some((*id, *i));
+                            }
+                        }
+                        if templates.is_empty() && !accounts.is_empty() && menu_row(ui, None, "New mail from a template…", "", "", false).clicked() {
+                            chosen = Some("No template yet: add them in Settings, Signatures, templates and quick replies.".to_owned());
                         }
                         ui.add_space(4.0);
                         ui.separator();
@@ -1141,6 +1204,9 @@ impl MailApp {
             self.create_menu = None;
         } else if let Some(id) = from {
             self.new_mail_from(id);
+            self.create_menu = None;
+        } else if let Some((id, i)) = template {
+            self.new_mail_from_template(id, i);
             self.create_menu = None;
         } else if let Some(text) = chosen {
             if text == "add" {
@@ -1528,158 +1594,6 @@ fn size_text(bytes: usize) -> String {
 }
 
 impl MailApp {
-    fn reading_pane(&mut self, ui: &mut Ui) {
-        // Review… clicked: which attachment, from whom, and the message's sender checks.
-        let mut review_request: Option<(usize, AttachmentInfo, Person, mailalm_safety::Authentication)> = None;
-        let mut action: Option<&'static str> = None;
-        // The agenda draws a message's invitation; it is taken out while the pane borrows the rest.
-        let mut pim = std::mem::take(&mut self.pim);
-        egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(24, 18))).show(ui, |ui| {
-            let Some(r) = &self.reading else {
-                ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("Select a message").color(t::FAINT));
-                });
-                return;
-            };
-            let summary = self.summary_of(&r.key).cloned();
-            let account = self.account(r.key.account).cloned();
-            let Some(parsed) = &r.parsed else {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    match &r.error {
-                        Some(e) => {
-                            ui.label(RichText::new(e).color(t::DANGER));
-                        }
-                        None => {
-                            ui.spinner();
-                            ui.label(RichText::new("Loading the message…").color(t::FAINT));
-                        }
-                    }
-                });
-                return;
-            };
-            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    let subject = if parsed.subject.is_empty() { "(no subject)" } else { parsed.subject.as_str() };
-                    ui.label(RichText::new(subject).size(20.0).strong());
-                    if summary.as_ref().is_some_and(|s| s.flags.flagged) {
-                        ui.label(RichText::new("⚑").size(16.0).color(t::DANGER));
-                    }
-                    if let Some(a) = &account {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            Frame::new().fill(t::RAISED).stroke(Stroke::new(1.0, t::LINE)).corner_radius(12).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    let (r, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
-                                    ui.painter().circle_filled(r.center(), 4.0, t::account(a.color));
-                                    ui.label(RichText::new(format!("{} · {}", a.name, a.address)).size(12.0));
-                                });
-                            });
-                        });
-                    }
-                });
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let from = parsed.from.display().to_owned();
-                    let (r, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
-                    ui.painter().circle_filled(r.center(), 20.0, avatar_color(&parsed.from.address));
-                    ui.painter().text(r.center(), Align2::CENTER_CENTER, initials(&from), FontId::proportional(14.0), Color32::WHITE);
-                    ui.vertical(|ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(&from).strong());
-                            if !parsed.from.address.is_empty() && parsed.from.address != from {
-                                ui.label(RichText::new(format!("<{}>", parsed.from.address)).color(t::MUTED));
-                            }
-                        });
-                        let date = parsed.date.or(summary.as_ref().map(|s| s.date)).unwrap_or(0);
-                        ui.label(RichText::new(time::long(date)).size(12.0).color(t::MUTED));
-                        if !parsed.to.is_empty() {
-                            ui.label(RichText::new(format!("To: {}", people(&parsed.to))).size(12.0).color(t::MUTED));
-                        }
-                        if !parsed.cc.is_empty() {
-                            ui.label(RichText::new(format!("Cc: {}", people(&parsed.cc))).size(12.0).color(t::MUTED));
-                        }
-                    });
-                });
-                ui.add_space(10.0);
-                let auth = mailalm_safety::authentication(parsed.authentication_results.as_deref());
-                ui.horizontal_wrapped(|ui| {
-                    if parsed.from_html {
-                        pill(ui, "Shown as text · no web content, pictures or scripts loaded", t::MUTED, t::RAISED);
-                    }
-                    attachments::auth_pills(ui, &auth);
-                });
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    for label in ["Reply", "Reply all", "Forward"] {
-                        if ui.button(label).clicked() {
-                            action = Some(label);
-                        }
-                    }
-                });
-                ui.add_space(12.0);
-                ui.separator();
-                if !parsed.attachments.is_empty() {
-                    let n = parsed.attachments.len();
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                        icons::paint(ui.painter(), r, Icon::Lock, t::WARN);
-                        ui.label(RichText::new(format!("{n} attachment{} · locked until you review each one", if n > 1 { "s" } else { "" })).size(12.0).color(t::MUTED));
-                    });
-                    ui.add_space(4.0);
-                    ui.horizontal_wrapped(|ui| {
-                        for (index, a) in parsed.attachments.iter().enumerate() {
-                            let reviewed = self.reviewed.contains(&(r.key.clone(), index));
-                            Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(8).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
-                                    ui.painter().rect_filled(rect, 6.0, if reviewed { t::RAISED } else { t::WARN_BG });
-                                    icons::paint(ui.painter(), rect, if reviewed { Icon::Check } else { Icon::Lock }, attachments::lock_color(reviewed));
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new(&a.name).strong());
-                                        ui.label(RichText::new(format!("{} · {} (declared)", size_text(a.size), a.declared_type)).size(12.0).color(t::FAINT));
-                                    });
-                                    let review = ui.button("Review…").on_hover_text("Check what this file really is, then preview, save or open it");
-                                    if review.clicked() {
-                                        review_request = Some((index, a.clone(), parsed.from.clone(), auth.clone()));
-                                    }
-                                });
-                            });
-                        }
-                    });
-                    ui.add_space(8.0);
-                    ui.separator();
-                }
-                let cx = Ctx { ws: &self.ws, engine: &self.engine };
-                pim.invitation_panel(ui, &cx, &r.key, parsed);
-                ui.add_space(12.0);
-                ui.add(egui::Label::new(RichText::new(&parsed.text).size(14.0)).selectable(true).wrap());
-            });
-        });
-        self.pim = pim;
-        match action {
-            Some("Reply") => self.reply(false, false),
-            Some("Reply all") => self.reply(true, false),
-            Some("Forward") => self.reply(false, true),
-            _ => {}
-        }
-        if let Some((index, info, sender, auth)) = review_request
-            && let Some(key) = self.reading.as_ref().map(|r| r.key.clone())
-        {
-            self.start_review(key, index, info, sender, auth);
-        }
-    }
-
-    /// Asks the account's worker for one attachment, and opens its approval dialog.
-    fn start_review(&mut self, key: MessageKey, index: usize, info: AttachmentInfo, sender: Person, auth: mailalm_safety::Authentication) {
-        let command = Command::Attachment { folder: key.folder.clone(), uid: key.uid, index };
-        if self.engine.send(key.account, command) {
-            self.review = Some(Review::new(key, index, info, sender, auth));
-        } else {
-            self.warn("The account is not running: the attachment cannot be read.");
-        }
-    }
-
     fn welcome(&mut self, ui: &mut Ui) {
         egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL)).show(ui, |ui| {
             ui.vertical_centered(|ui| {
@@ -1710,88 +1624,91 @@ impl MailApp {
                 ui.label(RichText::new("Settings").size(20.0).strong());
             });
             ui.add_space(14.0);
-            ui.label(RichText::new("ACCOUNTS").size(11.0).strong().color(t::FAINT));
-            ui.add_space(6.0);
-            for a in self.ws.accounts() {
-                let state = self.boxes.account(a.id);
-                Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(8).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
-                    ui.set_width(ui.available_width().min(720.0));
-                    ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(vec2(4.0, 34.0), Sense::hover());
-                        ui.painter().rect_filled(r, 2.0, t::account(a.color));
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(&a.name).strong());
-                            let servers = match (&a.imap, &a.smtp) {
-                                (Some(i), Some(s)) => format!("{} · IMAP {}:{} · SMTP {}:{}", a.address, i.host, i.port, s.host, s.port),
-                                _ if a.provider == Provider::Outlook => format!("{} · Outlook.com (Microsoft Graph)", a.address),
-                                _ if a.provider == Provider::Gmail => format!("{} · Gmail (Gmail API)", a.address),
-                                _ => a.address.clone(),
-                            };
-                            ui.label(RichText::new(servers).size(12.0).color(t::FAINT));
-                            if let Some(s) = state {
-                                ui.label(RichText::new(match s.link {
-                                    Link::Online => format!("Connected · {} folders", s.folders.len()),
-                                    Link::SignInRefused => s.link_detail.clone(),
-                                    Link::Offline => format!("Offline: {}", s.link_detail),
-                                    Link::Connecting | Link::Idle => "Connecting…".to_owned(),
-                                }).size(12.0).color(link_color(s.link)));
-                            }
-                        });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.button("Remove…").clicked() {
-                                remove = Some(a.id);
-                            }
-                            if ui.button("Edit…").clicked() {
-                                edit = Some(a.id);
-                            }
-                            if a.provider == Provider::Gmail {
-                                let label = if self.senders_open == Some(a.id) { "Hide senders" } else { "Blocked senders…" };
-                                if ui.button(label).clicked() {
-                                    senders = Some(a.id);
+            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.label(RichText::new("ACCOUNTS").size(11.0).strong().color(t::FAINT));
+                ui.add_space(6.0);
+                for a in self.ws.accounts() {
+                    let state = self.boxes.account(a.id);
+                    Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(8).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+                        ui.set_width(ui.available_width().min(720.0));
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(4.0, 34.0), Sense::hover());
+                            ui.painter().rect_filled(r, 2.0, t::account(a.color));
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(&a.name).strong());
+                                let servers = match (&a.imap, &a.smtp) {
+                                    (Some(i), Some(s)) => format!("{} · IMAP {}:{} · SMTP {}:{}", a.address, i.host, i.port, s.host, s.port),
+                                    _ if a.provider == Provider::Outlook => format!("{} · Outlook.com (Microsoft Graph)", a.address),
+                                    _ if a.provider == Provider::Gmail => format!("{} · Gmail (Gmail API)", a.address),
+                                    _ => a.address.clone(),
+                                };
+                                ui.label(RichText::new(servers).size(12.0).color(t::FAINT));
+                                if let Some(s) = state {
+                                    ui.label(RichText::new(match s.link {
+                                        Link::Online => format!("Connected · {} folders", s.folders.len()),
+                                        Link::SignInRefused => s.link_detail.clone(),
+                                        Link::Offline => format!("Offline: {}", s.link_detail),
+                                        Link::Connecting | Link::Idle => "Connecting…".to_owned(),
+                                    }).size(12.0).color(link_color(s.link)));
                                 }
-                            }
+                            });
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.button("Remove…").clicked() {
+                                    remove = Some(a.id);
+                                }
+                                if ui.button("Edit…").clicked() {
+                                    edit = Some(a.id);
+                                }
+                                if a.provider == Provider::Gmail {
+                                    let label = if self.senders_open == Some(a.id) { "Hide senders" } else { "Blocked senders…" };
+                                    if ui.button(label).clicked() {
+                                        senders = Some(a.id);
+                                    }
+                                }
+                            });
                         });
-                    });
-                    if self.senders_open == Some(a.id) {
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Gmail filters made by MailALM (a sender's address, to Spam, to the Trash, or never to Spam). Other filters are left alone, in Gmail's settings.").size(11.5).color(t::FAINT));
-                        ui.add_space(4.0);
-                        match state.and_then(|s| s.sender_rules.as_ref()) {
-                            None => {
-                                ui.label(RichText::new("Reading Gmail's filters…").size(12.0).color(t::MUTED));
-                            }
-                            Some(rules) if rules.is_empty() => {
-                                ui.label(RichText::new("No sender is blocked or allowed. Use Junk, Block sender on a message.").size(12.0).color(t::MUTED));
-                            }
-                            Some(rules) => {
-                                for r in rules {
-                                    ui.horizontal(|ui| {
-                                        let what = match r.kind {
-                                            SenderRuleKind::Spam => "blocked: to Spam",
-                                            SenderRuleKind::Trash => "blocked: to the Trash",
-                                            SenderRuleKind::NeverSpam => "allowed: never to Spam",
-                                        };
-                                        ui.label(RichText::new(&r.address).size(12.5));
-                                        ui.label(RichText::new(what).size(12.0).color(t::MUTED));
-                                        if ui.small_button("Remove").clicked() {
-                                            sender_command = Some((a.id, SenderCommand::Remove(r.id.clone())));
-                                        }
-                                    });
+                        if self.senders_open == Some(a.id) {
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("Gmail filters made by MailALM (a sender's address, to Spam, to the Trash, or never to Spam). Other filters are left alone, in Gmail's settings.").size(11.5).color(t::FAINT));
+                            ui.add_space(4.0);
+                            match state.and_then(|s| s.sender_rules.as_ref()) {
+                                None => {
+                                    ui.label(RichText::new("Reading Gmail's filters…").size(12.0).color(t::MUTED));
+                                }
+                                Some(rules) if rules.is_empty() => {
+                                    ui.label(RichText::new("No sender is blocked or allowed. Use Junk, Block sender on a message.").size(12.0).color(t::MUTED));
+                                }
+                                Some(rules) => {
+                                    for r in rules {
+                                        ui.horizontal(|ui| {
+                                            let what = match r.kind {
+                                                SenderRuleKind::Spam => "blocked: to Spam",
+                                                SenderRuleKind::Trash => "blocked: to the Trash",
+                                                SenderRuleKind::NeverSpam => "allowed: never to Spam",
+                                            };
+                                            ui.label(RichText::new(&r.address).size(12.5));
+                                            ui.label(RichText::new(what).size(12.0).color(t::MUTED));
+                                            if ui.small_button("Remove").clicked() {
+                                                sender_command = Some((a.id, SenderCommand::Remove(r.id.clone())));
+                                            }
+                                        });
+                                    }
                                 }
                             }
                         }
-                    }
-                });
+                    });
+                    ui.add_space(6.0);
+                }
+                if ui.button("Add an account…").clicked() {
+                    add = true;
+                }
+                self.writing_settings(ui);
+                ui.add_space(20.0);
+                ui.label(RichText::new("ABOUT").size(11.0).strong().color(t::FAINT));
                 ui.add_space(6.0);
-            }
-            if ui.button("Add an account…").clicked() {
-                add = true;
-            }
-            ui.add_space(20.0);
-            ui.label(RichText::new("ABOUT").size(11.0).strong().color(t::FAINT));
-            ui.add_space(6.0);
-            ui.label(RichText::new(format!("MailALM {} · MIT OR Apache-2.0", env!("CARGO_PKG_VERSION"))).color(t::MUTED));
-            ui.label(RichText::new("Passwords and Microsoft and Google sign-ins are kept in the Windows Credential Manager. The mail cache is in your local application data folder.").size(12.0).color(t::FAINT));
+                ui.label(RichText::new(format!("MailALM {} · MIT OR Apache-2.0", env!("CARGO_PKG_VERSION"))).color(t::MUTED));
+                ui.label(RichText::new("Passwords and Microsoft and Google sign-ins are kept in the Windows Credential Manager. The mail cache is in your local application data folder.").size(12.0).color(t::FAINT));
+            });
         });
         if back {
             self.page = Page::Mail;
@@ -1900,43 +1817,6 @@ impl MailApp {
                     self.engine.send(key.account, Command::Apply(Change::Delete { folder: key.folder.clone(), uids: vec![key.uid] }));
                     self.drop_hit(&key);
                 }
-            }
-        }
-    }
-
-    fn compose_windows(&mut self, ui: &mut Ui) {
-        let ctx = ui.ctx().clone();
-        if !self.composes.is_empty() || !self.pim.editors.is_empty() {
-            self.pim.refresh_book(&self.boxes);
-        }
-        let accounts: HashMap<AccountId, (String, Provider)> = self.ws.accounts().iter().map(|a| (a.id, (a.name.clone(), a.provider))).collect();
-        let mut done: Vec<usize> = Vec::new();
-        let mut sends: Vec<(AccountId, Box<Outgoing>)> = Vec::new();
-        let book = &self.pim.book;
-        let suggest = |typed: &str| book.suggest(typed, 8);
-        for (n, c) in self.composes.iter_mut().enumerate() {
-            let (label, limit) = match accounts.get(&c.account) {
-                Some((name, provider)) => (name.clone(), SizeLimit::of(*provider)),
-                None => (String::new(), SizeLimit::Attachments(mailalm_engine::ATTACHMENTS_LIMIT)),
-            };
-            match c.show(&ctx, &label, limit, &suggest) {
-                ComposeAction::None => {}
-                ComposeAction::Discard => done.push(n),
-                ComposeAction::Send(o) => {
-                    sends.push((c.account, o));
-                    done.push(n);
-                }
-            }
-        }
-        for n in done.into_iter().rev() {
-            self.composes.remove(n);
-        }
-        for (account, o) in sends {
-            let subject = o.subject.clone();
-            if self.engine.send(account, Command::Send(o)) {
-                self.say(format!("Sending \"{subject}\"…"));
-            } else {
-                self.warn("The account is not running: the message was not sent.");
             }
         }
     }

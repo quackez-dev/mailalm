@@ -254,3 +254,38 @@ fn what_is_exported_imports_back_the_same() {
     assert_eq!(back.paragraphs, d.paragraphs);
     assert_eq!(back.images, d.images);
 }
+
+/// The reading pane's import: web pictures are listed (never fetched), with the size the message
+/// declares; those the window fetched are shown where the message names them.
+#[test]
+fn web_pictures_are_listed_and_shown_once_given() {
+    let html = "<p>Hi</p><img src=\" https://cdn.example/a.png \" alt=\"Logo\" width=\"120\" height=\"40px\">\
+                <img src=\"http://t.example/o.gif\" width=\"1\" height=\"1\">\
+                <img src=\"https://t.example/p.gif\" style=\"WIDTH: 2px; height:2px\">\
+                <img src=\"https://t.example/h.gif\" style=\"display: none\">\
+                <img src=\"https://cdn.example/a.png\">\
+                <img src=\"https://cdn.example/w.png\" width=\"100%\">\
+                <img src=\"javascript:x\"><img src=\"data:image/png;base64,AAAA\"><img src=\"cid:nothere\">";
+    let first = import_message_html(html, &[], &[]);
+    let listed: Vec<(&str, Option<u32>, Option<u32>)> = first.remote.iter().map(|r| (r.url.as_str(), r.width, r.height)).collect();
+    assert_eq!(
+        listed,
+        [
+            ("https://cdn.example/a.png", Some(120), Some(40)),
+            ("http://t.example/o.gif", Some(1), Some(1)),
+            ("https://t.example/p.gif", Some(2), Some(2)),
+            ("https://t.example/h.gif", Some(0), Some(0)),
+            ("https://cdn.example/w.png", None, None),
+        ]
+    );
+    assert!(first.document.images.is_empty());
+    assert!(first.document.paragraphs.iter().any(|p| p.text().contains("[Logo]")), "the alternative text stands in");
+
+    let logo = InlineImage::with_content_id(png(120, 40), "remote-1.mailalm").unwrap();
+    let second = import_message_html(html, &[], &[("https://cdn.example/a.png".to_owned(), logo.clone())]);
+    assert_eq!(second.document.images, vec![logo]);
+    assert_eq!(second.document.paragraphs.iter().filter(|p| p.kind == Kind::Image("remote-1.mailalm".into())).count(), 2, "shown where named");
+    assert!(!second.remote.iter().any(|r| r.url == "https://cdn.example/a.png"), "given: no longer listed");
+    // The plain import is the same document as before, without the list.
+    assert_eq!(import_html(html, &[]), first.document);
+}

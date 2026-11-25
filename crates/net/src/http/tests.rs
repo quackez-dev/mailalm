@@ -299,3 +299,31 @@ fn local_hosts() {
         assert!(!local_host(h), "{h}");
     }
 }
+
+/// A web picture: one GET, nothing of the user's in it, only a 200 taken, the size capped, a
+/// redirect not followed; nothing is sent to an address that isn't one.
+#[test]
+fn a_web_picture_is_fetched_plainly() {
+    let (base, h) = serve(vec![
+        b"HTTP/1.1 200 OK\r\nSet-Cookie: id=1\r\nContent-Type: image/png\r\nContent-Length: 4\r\n\r\nPNG!".to_vec(),
+        b"HTTP/1.1 302 Found\r\nLocation: https://elsewhere.example/\r\nContent-Length: 0\r\n\r\n".to_vec(),
+        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_vec(),
+        b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789".to_vec(),
+    ]);
+    assert_eq!(fetch_picture(&format!("{base}/p.png?u=1"), 100).unwrap(), b"PNG!");
+    assert!(matches!(fetch_picture(&format!("{base}/p.png"), 100), Err(NetError::Server(m)) if m.contains("redirect")));
+    assert!(matches!(fetch_picture(&format!("{base}/p.png"), 100), Err(NetError::Server(m)) if m.contains("404")));
+    assert!(matches!(fetch_picture(&format!("{base}/big.png"), 5), Err(NetError::TooLarge(_))));
+    let seen = h.join().unwrap();
+    assert_eq!(seen.len(), 4, "each fetched once, the redirect not followed");
+    let first = &seen[0];
+    assert!(first.starts_with("GET /p.png?u=1 HTTP/1.1\r\n"), "{first}");
+    let lower = first.to_ascii_lowercase();
+    for word in ["cookie", "referer", "authorization", "origin"] {
+        assert!(!lower.contains(word), "{word} in {first}");
+    }
+    assert!(matches!(fetch_picture("https://x.example/a b.png", 100), Err(NetError::Invalid(_))));
+    assert!(fetch_picture("cid:abc", 100).is_err());
+    assert!(fetch_picture("https://user@x.example/p.png", 100).is_err(), "no credentials in an address");
+    assert!(matches!(fetch_picture(&format!("https://x.example/{}", "a".repeat(5000)), 100), Err(NetError::Invalid(_))));
+}

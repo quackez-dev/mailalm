@@ -3,9 +3,9 @@
 A mail and calendar client for Windows, written in Rust with egui: Outlook.com/Hotmail, Gmail and
 classic IMAP accounts side by side, each kept clearly apart.
 
-**Status: phase 6.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
+**Status: phase 7.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
 (Microsoft Graph) and Gmail accounts (Gmail API), the last two signed in on the provider's page in
-the browser: reading, sending in plain text, folders and labels, moving, flags, a local cache,
+the browser: reading, sending, folders and labels, moving, flags, a local cache,
 search in the cache, and changes made while offline. Outlook accounts report junk to Outlook.com;
 Gmail accounts report spam to Gmail and block or allow senders with Gmail filters.
 
@@ -29,6 +29,18 @@ the time taken in all of them can be drawn over the days; events are planned in 
 which shows what they clash with. An invitation received shows in the message, with its clashes;
 it enters the calendar only when answered. Reminders ring in their own window (snooze, dismiss).
 The recipient fields offer the contacts of every account and the people seen in mail.
+
+**Phase 7** brings writing and reading. Messages are written in rich text (or plain text), with
+each account's signature (above a reply's quoted text, switched with the sender), templates and
+quick replies; replies and forwards quote the original with its formatting. Drafts are kept on
+the account's server. Before sending, the window shows the sender in its colour, the recipients
+outside its domain, a missing attachment and the size; Antidote's corrector, dictionaries and
+guides (and Anti-Oups!, as an option) work on the text when Antidote is installed. A message sent
+waits a few seconds with an Undo button, or until the date and time it is scheduled for. HTML
+messages are shown formatted (converted by MailALM, no web engine): links show their real domain
+and warn about look-alike names before they open; pictures from the internet stay blocked unless
+loaded for a message or approved for a sender, and tracking pictures never load; a sender failing
+DMARC is flagged; a mailing list can be left after a confirmation that says what will happen.
 
 ## Principles
 

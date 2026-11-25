@@ -329,3 +329,25 @@ fn errors_from_statuses() {
     assert!(convert::error_codes(Some(&nested)).iter().any(|c| resync_code(c)));
     assert!(!resync_code("ErrorItemNotFound"));
 }
+
+/// A draft from MIME: posted once in base64 to `/me/messages`, its immutable id kept; refused or
+/// without an id, an error.
+#[test]
+fn drafts_are_made_from_mime() {
+    let mime = b"From: a@b.example\r\nSubject: draft\r\n\r\nbody\r\n";
+    let (base, seen) = serve(vec![
+        answer("201 Created", r#"{"id":"AAMk-draft_1=","isDraft":true}"#),
+        answer("201 Created", r#"{"isDraft":true}"#),
+        answer("400 Bad Request", r#"{"error":{"code":"ErrorMimeContentInvalid","message":"Invalid MIME."}}"#),
+    ]);
+    let (_, mut c) = client(&base);
+    assert_eq!(c.create_draft(mime).unwrap(), "AAMk-draft_1=");
+    assert!(matches!(c.create_draft(mime), Err(NetError::Protocol(_))));
+    assert!(matches!(c.create_draft(mime), Err(NetError::Server(m)) if m == "HTTP 400: Invalid MIME."));
+    assert!(matches!(c.create_draft(b""), Err(NetError::Invalid(_))));
+    let seen = seen.join().unwrap();
+    assert_eq!(seen.len(), 3);
+    assert!(seen[0].starts_with("POST /v1.0/me/messages HTTP/1.1\r\n") && seen[0].contains("Content-Type: text/plain\r\n"), "{}", seen[0]);
+    assert!(seen[0].contains("Prefer: IdType=\"ImmutableId\"\r\n"), "{}", seen[0]);
+    assert!(seen[0].ends_with(&crate::base64::encode(mime)), "{}", seen[0]);
+}

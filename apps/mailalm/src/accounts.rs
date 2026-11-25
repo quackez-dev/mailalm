@@ -467,6 +467,25 @@ pub(crate) fn open_in_browser(url: &str) -> Result<(), String> {
     if !url.starts_with("https://") {
         return Err("not a secure web address".to_owned());
     }
+    launch_browser(url)
+}
+
+/// Shows a link of a received message in the default browser, after the user confirmed it
+/// (`reading.rs`): `https://` or `http://` addresses alone (the scheme in lower case, as the
+/// editor's model writes it), without spaces, controls, invisible characters or quotes, at most
+/// 4096 bytes. Anything else, which Windows' URL handler could give to another program, is
+/// refused.
+pub(crate) fn open_web_link(url: &str) -> Result<(), String> {
+    let web = url.starts_with("https://") || url.starts_with("http://");
+    let clean = !url.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '<' | '>' | '\\' | '^' | '`' | '{' | '}' | '|') || ('\u{200b}'..='\u{206f}').contains(&c) || c == '\u{feff}');
+    if !web || !clean || url.len() > 4096 {
+        return Err("not a web address MailALM opens".to_owned());
+    }
+    launch_browser(url)
+}
+
+/// Windows' URL handler, with an address already checked.
+fn launch_browser(url: &str) -> Result<(), String> {
     std::process::Command::new("rundll32.exe")
         .arg("url.dll,FileProtocolHandler")
         .arg(url)

@@ -393,3 +393,37 @@ fn ids_text_and_numbers() {
         assert_eq!(convert::number(Some(&bad)), None, "{bad}");
     }
 }
+
+/// Drafts: made by an upload, replaced in place (or made again when the old one is gone), and
+/// deleted (one already gone counts as done).
+#[test]
+fn drafts_are_saved_replaced_and_deleted() {
+    let mime = b"From: a@b.example\r\nSubject: draft\r\n\r\nbody\r\n";
+    let (base, seen) = serve(vec![
+        ok(&json!({"id": "r-1", "message": {"id": "m1", "labelIds": ["DRAFT"]}})),
+        ok(&json!({"id": "r-1", "message": {"id": "m2"}})),
+        answer("404 Not Found", r#"{"error":{"code":404,"message":"Requested entity was not found."}}"#),
+        ok(&json!({"id": "r-2"})),
+        ok(&json!({"message": {}})),
+        answer("204 No Content", ""),
+        answer("404 Not Found", ""),
+    ]);
+    let mut c = client(&base);
+    assert_eq!(c.save_draft(mime, None).unwrap(), "r-1");
+    assert_eq!(c.save_draft(mime, Some("r-1")).unwrap(), "r-1");
+    assert_eq!(c.save_draft(mime, Some("r-1")).unwrap(), "r-2", "gone: made again");
+    assert!(matches!(c.save_draft(mime, None), Err(NetError::Protocol(_))));
+    c.delete_draft("r-2").unwrap();
+    c.delete_draft("r-2").unwrap();
+    assert!(matches!(c.save_draft(mime, Some("../x")), Err(NetError::Invalid(_))));
+    assert!(matches!(c.delete_draft("a b"), Err(NetError::Invalid(_))));
+    assert!(matches!(c.save_draft(b"", None), Err(NetError::Invalid(_))));
+    let seen = seen.join().unwrap();
+    assert_eq!(seen.len(), 7);
+    assert!(seen[0].starts_with("POST /upload/gmail/v1/users/me/drafts?uploadType=media HTTP/1.1\r\n"), "{}", seen[0]);
+    assert!(seen[0].contains("Content-Type: message/rfc822\r\n") && seen[0].ends_with(std::str::from_utf8(mime).unwrap()), "{}", seen[0]);
+    assert!(seen[1].starts_with("PUT /upload/gmail/v1/users/me/drafts/r-1?uploadType=media HTTP/1.1\r\n"), "{}", seen[1]);
+    assert!(seen[1].contains("Content-Type: message/rfc822\r\n") && seen[1].ends_with(std::str::from_utf8(mime).unwrap()), "{}", seen[1]);
+    assert!(seen[2].starts_with("PUT ") && seen[3].starts_with("POST /upload/gmail/v1/users/me/drafts?uploadType=media "), "{}", seen[3]);
+    assert!(seen[5].starts_with("DELETE /gmail/v1/users/me/drafts/r-2 HTTP/1.1\r\n"), "{}", seen[5]);
+}

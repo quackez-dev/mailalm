@@ -337,6 +337,45 @@ impl GmailClient {
         }
     }
 
+    /// Save a MIME message as a draft (`drafts.create`, or `drafts.update` of the draft `replace`
+    /// when it is given and still there; uploaded as `message/rfc822`): its draft id. Not sent
+    /// again on its own once it went out: the user saves again.
+    pub fn save_draft(&mut self, raw: &[u8], replace: Option<&str>) -> Result<String> {
+        if raw.is_empty() {
+            return Err(NetError::Invalid("an empty message".into()));
+        }
+        if raw.len() > MAX_SEND {
+            return Err(NetError::TooLarge(format!("the message is larger than {} MB", MAX_SEND >> 20)));
+        }
+        if let Some(id) = replace {
+            check_id(id)?;
+            let url = format!("{}/upload/gmail/v1/users/me/drafts/{}?uploadType=media", self.base, http::pct(id));
+            let req = Request::new("PUT", &url, MAX_JSON).header("Content-Type", "message/rfc822");
+            let resp = self.exchange(Request { body: raw.to_vec(), ..req }, false, false).map_err(|f| self.hide(f.error))?;
+            // Gone (sent or deleted elsewhere): a new one is made.
+            if resp.status != 404 {
+                self.checked(&resp)?;
+                return draft_id(&resp);
+            }
+        }
+        let url = format!("{}/upload/gmail/v1/users/me/drafts?uploadType=media", self.base);
+        let req = Request::post(&url, "message/rfc822", raw.to_vec(), MAX_JSON);
+        let resp = self.exchange(req, false, false).map_err(|f| self.hide(f.error))?;
+        self.checked(&resp)?;
+        draft_id(&resp)
+    }
+
+    /// Delete a draft for good (`drafts.delete`); one already gone counts as done.
+    pub fn delete_draft(&mut self, id: &str) -> Result<()> {
+        check_id(id)?;
+        let url = format!("{}/drafts/{}", self.api(), http::pct(id));
+        let resp = self.call(Request::new("DELETE", &url, MAX_JSON))?;
+        if resp.status == 404 {
+            return Ok(());
+        }
+        self.checked(&resp)
+    }
+
     /// The mailbox's filters that MailALM makes: mail from one address, into the spam, into the
     /// bin, or never into the spam, and nothing else. Every other filter is left out (and left
     /// alone).
@@ -444,6 +483,16 @@ fn check_id(id: &str) -> Result<()> {
 /// Every message id checked before anything is sent.
 fn check_ids(ids: &[String]) -> Result<()> {
     ids.iter().try_for_each(|id| check_id(id))
+}
+
+/// The id in a `drafts.create` or `drafts.update` answer.
+fn draft_id(resp: &Response) -> Result<String> {
+    json_of(resp)?
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| convert::id_ok(id))
+        .map(str::to_owned)
+        .ok_or_else(|| NetError::Protocol("Gmail didn't give the draft's id".into()))
 }
 
 /// A POST with a JSON body.

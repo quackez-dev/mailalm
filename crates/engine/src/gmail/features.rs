@@ -29,6 +29,16 @@ impl MailWorker for Gmail {
         &self.store
     }
 
+    /// A Gmail draft (`drafts.create`, or `drafts.update` of the one saved before). The draft is
+    /// named by Gmail's draft id.
+    fn store_draft(&mut self, raw: &[u8], _message_id: &str, replace: Option<&str>) -> Result<String, String> {
+        self.call(|c| c.save_draft(raw, replace)).map_err(|e| describe(&e))
+    }
+
+    fn drop_draft(&mut self, draft: &str) -> Result<(), String> {
+        self.call(|c| c.delete_draft(draft)).map_err(|e| describe(&e))
+    }
+
     fn tell(&self, e: Event) {
         self.emit(e);
     }

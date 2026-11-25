@@ -20,6 +20,11 @@
 //! - snoozed messages and follow-ups ([`LaterCommand`]), checked every minute and at start;
 //! - the search with its folders ([`Command::Find`]), and the server's search beside the cache's;
 //! - leaving a mailing list ([`Command::Unsubscribe`]), only on the user's confirmation.
+//!
+//! Phase 7 adds the drafts kept on the account's server ([`Command::SaveDraft`],
+//! [`Command::DeleteDraft`]): IMAP `APPEND` to Drafts with `\Draft`, a Graph message made from
+//! MIME in Drafts, a Gmail draft; and the HTML version of a message opened
+//! ([`Event::Message`]'s `html`), for the reading pane to show it formatted.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -27,7 +32,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
-use mailalm_mime::{AttachmentData, Outgoing, OutgoingAttachment, Parsed};
+use mailalm_mime::{AttachmentData, HtmlBody, Outgoing, OutgoingAttachment, Parsed};
 use mailalm_model::pim::ical::{Invitation, Method};
 use mailalm_model::pim::{Calendar, Contact, Event as CalendarEvent, Response, Task, TaskList, ZoneRules};
 use mailalm_model::later::{FollowUp, Mark, Snoozed};
@@ -38,6 +43,7 @@ use mailalm_safety::Report;
 pub mod agenda;
 mod find;
 mod gmail;
+mod drafts;
 mod ids;
 mod itip;
 mod later;
@@ -127,6 +133,13 @@ pub enum Command {
     /// it**, having seen the domain (`mailalm_mime::Unsubscribe`): the one-click POST contacts a
     /// domain the sender chose. A web page is opened by the interface, not here.
     Unsubscribe { folder: String, uid: u32, how: UnsubscribeHow },
+    /// Keeps the message being written in compose window `compose` as a draft on the account's
+    /// server (in its Drafts folder), in place of the draft `replace` saved before (what
+    /// [`Event::Draft`] gave). The answer is [`Event::Draft`] with `compose`.
+    SaveDraft { compose: u64, message: Box<Outgoing>, replace: Option<String> },
+    /// Deletes a draft saved before (the message was sent, or discarded): what [`Event::Draft`]
+    /// gave. One already gone counts as done.
+    DeleteDraft(String),
     Stop,
 }
 
@@ -225,7 +238,9 @@ pub enum Event {
     Folders { account: AccountId, folders: Vec<Folder> },
     /// The folder's summaries, newest first.
     Summaries { account: AccountId, folder: String, summaries: Vec<Summary> },
-    Message { account: AccountId, folder: String, uid: u32, parsed: Box<Parsed> },
+    /// A message opened; `html`: its HTML version and the pictures it shows (`cid:`), when it
+    /// has one, for the reading pane to show it formatted (converted, never run).
+    Message { account: AccountId, folder: String, uid: u32, parsed: Box<Parsed>, html: Option<Box<HtmlBody>> },
     /// A message could not be shown (gone from the server, or offline and not in the cache).
     MessageUnavailable { account: AccountId, folder: String, uid: u32, reason: String },
     Link { account: AccountId, link: Link, detail: String },
@@ -265,6 +280,9 @@ pub enum Event {
     /// What the server's search found ([`Command::Find`] with `server`), "from the server",
     /// newest first; or why it couldn't search.
     ServerResults { account: AccountId, id: u64, result: Result<Vec<(String, Summary)>, String> },
+    /// A draft of compose window `compose` was saved on the server ([`Command::SaveDraft`]):
+    /// what names it there (to replace or delete it later); or why it was not.
+    Draft { account: AccountId, compose: u64, result: Result<String, String> },
 }
 
 /// An attachment decoded for its review, and what MailALM found about it.
@@ -333,7 +351,8 @@ impl Event {
             | Event::RulePreview { account, .. }
             | Event::Later { account, .. }
             | Event::FollowUpDue { account, .. }
-            | Event::ServerResults { account, .. } => *account,
+            | Event::ServerResults { account, .. }
+            | Event::Draft { account, .. } => *account,
         }
     }
 }

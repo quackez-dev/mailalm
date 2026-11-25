@@ -100,6 +100,46 @@ Aucun nouveau domaine.
   connecte à ce port **sur ce PC seulement**. Le code ne peut pas viser un autre hôte.
 - Le texte envoyé (zones à corriger, objet, corps et destinataires pour l'Anti-Oups!) va à l'Antidote installé sur
   le PC. **Aucun texte ne sort du PC** par MailALM ; ce qu'Antidote fait ensuite relève d'Antidote.
+- Les boutons d'Antidote ne s'affichent que si le registre nomme son dossier et que `AgentConnectixConsole.exe` s'y
+  trouve ; cette vérification ne lance rien. La connexion n'est ouverte qu'au premier clic sur un bouton d'Antidote,
+  ou à l'envoi quand l'Anti-Oups! est activé dans les réglages (désactivé par défaut).
+
+## Phase 7 : rédaction et lecture
+
+| Domaine | Port | Protocole | Quand |
+|---|---|---|---|
+| serveurs des comptes (déjà listés) | ceux du compte | IMAP, HTTPS | Brouillons gardés sur le serveur : IMAP `APPEND` dans Drafts (drapeau `\Draft`) ; Graph `POST /me/messages` (le message en MIME, que Graph range dans Drafts) ; Gmail `drafts.create` et `drafts.update` (envoi `message/rfc822` sur `gmail.googleapis.com/upload/…`), puis suppression de l'ancien brouillon |
+| **domaine choisi par l'expéditeur d'un message** | 443 (TLS) | HTTPS, requêtes `GET` | Images distantes d'un message HTML, **seulement** quand l'utilisateur clique « Load for this message », ou pour un expéditeur qu'il a approuvé (« Always for this sender ») |
+
+- **Brouillons** : aucun nouveau domaine. Ils partent quand l'utilisateur clique « Save draft » et quand il ferme
+  une fenêtre de rédaction où il a écrit quelque chose ; le brouillon précédent est remplacé, et supprimé une fois
+  le message envoyé ou abandonné. Gmail : la permission `gmail.modify`, déjà demandée, couvre les brouillons.
+- **Envoi différé** : gardé sur ce PC (`%LOCALAPPDATA%\MailALM\cache\scheduled.json`, pièces jointes comprises) et
+  envoyé par MailALM à l'heure prévue, par le serveur d'envoi habituel du compte. Aucun nouveau domaine ; l'envoi
+  différé des fournisseurs (Graph `PidTagDeferredSendTime`) n'est pas utilisé.
+- **Images distantes : un domaine quelconque**, comme le désabonnement en un clic. Garde-fous :
+  - bloquées par défaut : rien ne part sans geste de l'utilisateur (pour ce message, ou une fois pour un
+    expéditeur ; la liste des expéditeurs approuvés est dans les réglages et se vide ligne par ligne) ;
+  - `https://` seulement, en TLS vérifié ; une adresse `http://`, une adresse IP, `localhost` ou un nom du réseau
+    local est refusé avant tout envoi ;
+  - 30 images par message au plus, 5 Mo chacune au plus ; une redirection n'est pas suivie ; seule une réponse
+    `200` est gardée ;
+  - jamais les images de pistage : une image déclarée de 2 pixels ou moins, ou cachée, ou dont l'adresse est celle
+    d'un traceur connu (liste dans `apps/mailalm/src/pictures.rs`), n'est jamais demandée ; une image reçue de 2
+    pixels ou moins est jetée ;
+  - la requête ne porte que `Host`, `User-Agent: MailALM/<version>` et `Accept` : ni cookie (MailALM n'en garde
+    aucun), ni `Referer`, ni identifiant ; une connexion par image ;
+  - ce qui revient est lu comme hostile : PNG, JPEG ou GIF reconnus par leur contenu (pas par le type annoncé),
+    16 384 pixels de côté et 40 mégapixels au plus, décodés en Rust avec ces limites ;
+  - le site apprend l'adresse IP du PC, l'heure, et que le message a été ouvert (l'adresse d'une image contient
+    souvent un identifiant) : c'est ce que le blocage évite.
+- **Liens** : MailALM ne les suit jamais. Un clic montre le vrai domaine (en punycode s'il contient des lettres
+  internationales) et les avertissements (texte qui annonce un autre domaine, alphabets mélangés, lettres
+  cyrilliques ou grecques qui imitent des lettres latines, nom d'utilisateur devant le domaine, adresse IP, `http`
+  sans chiffrement), puis, après confirmation, le navigateur ouvre la page (`http` et `https` seulement) ou une
+  fenêtre de rédaction s'ouvre (`mailto`). Ce que le navigateur charge relève du navigateur.
+- **Messages HTML** : convertis en mise en page interne par MailALM (pas de moteur web) ; ni script, ni
+  formulaire, ni CSS distant, ni cadre. Les images jointes au message (`cid:`) s'affichent sans réseau.
 
 ## Phase 8 : règles, report, recherche, désabonnement
 

@@ -1175,7 +1175,8 @@ impl Editor {
     // ---- Signature ----
 
     /// Replaces the signature (the paragraphs marked as such) with `signature`, where the old one
-    /// was, or at the end; `None` removes it.
+    /// was, else where [`signature_slot`] says (above a reply's quoted text, or at the end);
+    /// `None` removes it.
     pub fn set_signature(&mut self, signature: Option<&Document>) {
         let incoming: Vec<Paragraph> = signature
             .map(|s| s.paragraphs.iter().cloned().map(|mut p| {
@@ -1190,7 +1191,7 @@ impl Editor {
             if ed.doc.paragraphs.is_empty() {
                 ed.doc.paragraphs.push(Paragraph::default());
             }
-            let at = first.unwrap_or(ed.doc.paragraphs.len()).min(ed.doc.paragraphs.len());
+            let at = first.unwrap_or_else(|| signature_slot(&ed.doc)).min(ed.doc.paragraphs.len());
             for image in images {
                 if !ed.doc.images.iter().any(|i| i.content_id == image.content_id) {
                     ed.doc.images.push(image);
@@ -1199,6 +1200,29 @@ impl Editor {
             ed.doc.paragraphs.splice(at..at, incoming);
             ed.sel = Selection { anchor: ed.doc.clamp(ed.sel.anchor), head: ed.doc.clamp(ed.sel.head) };
         });
+    }
+
+    /// The link on the character at `pos` (its `offset` counts characters), and the text of the
+    /// characters around it that carry the same link: what a reader sees of the link.
+    pub fn link_at(&self, pos: Pos) -> Option<(Link, String)> {
+        let p = self.doc.paragraph(pos.para)?;
+        let link = p.format_of_char(pos.offset)?.link.clone()?;
+        let mut chars: Vec<(char, bool)> = Vec::with_capacity(p.len());
+        for run in &p.runs {
+            let same = run.format.link.as_ref() == Some(&link);
+            chars.extend(run.text.chars().map(|c| (c, same)));
+        }
+        let linked = |i: usize| chars.get(i).is_some_and(|(_, same)| *same);
+        let mut start = pos.offset;
+        while start > 0 && linked(start - 1) {
+            start -= 1;
+        }
+        let mut end = pos.offset;
+        while linked(end) {
+            end += 1;
+        }
+        let text: String = chars.get(start..end)?.iter().map(|(c, _)| *c).collect();
+        Some((link, text))
     }
 
     // ---- For the text access ----
@@ -1244,4 +1268,21 @@ impl Editor {
             assert_eq!(self.doc.clamp(pos), pos, "selection out of the document: {pos:?}");
         }
     }
+}
+
+/// Where a new signature goes in `doc` (one without a signature): above the quoted text of a
+/// reply or a forward (the first quoted paragraph), and above its attribution line ("On …, …
+/// wrote:", a line ending with a colon just before it) and the empty lines over that, the first
+/// two lines staying above (one to write on, one empty); at the end when nothing is quoted.
+pub fn signature_slot(doc: &Document) -> usize {
+    let Some(first_quoted) = doc.paragraphs.iter().position(|p| p.quote > 0) else { return doc.paragraphs.len() };
+    let mut at = first_quoted;
+    let attribution = |p: &Paragraph| p.quote == 0 && !p.kind.is_image() && !p.is_empty() && p.text().trim_end().ends_with(':');
+    if at > 0 && doc.paragraphs.get(at - 1).is_some_and(attribution) {
+        at -= 1;
+    }
+    while at > 2 && doc.paragraphs.get(at - 1).is_some_and(|p| p.quote == 0 && p.is_empty() && !p.kind.is_image()) {
+        at -= 1;
+    }
+    at
 }

@@ -38,7 +38,7 @@ pub mod oauth;
 pub mod smtp;
 mod stream;
 
-pub use http::one_click_unsubscribe;
+pub use http::{fetch_picture, one_click_unsubscribe};
 pub use imap::{Fetched, ImapSession, Mailbox};
 
 #[derive(Debug, thiserror::Error)]

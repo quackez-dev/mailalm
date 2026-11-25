@@ -102,6 +102,18 @@ impl<S: Read + Write> Client<S> {
         Ok(found)
     }
 
+    /// `UID SEARCH HEADER Message-ID "<id>"` in the selected folder (a draft saved before, to
+    /// replace it): the UIDs found. An id that isn't one (a space, a quote, a control) is refused
+    /// before anything is sent.
+    pub(super) fn search_message_id(&mut self, message_id: &str) -> Result<Vec<u32>> {
+        let id = message_id.trim().trim_start_matches('<').trim_end_matches('>');
+        if id.is_empty() || id.len() > 900 || !id.chars().all(|c| c.is_ascii_graphic() && !matches!(c, '"' | '\' | '<' | '>')) {
+            return Err(NetError::Invalid("not a Message-ID".into()));
+        }
+        let cmd = format!("UID SEARCH HEADER Message-ID \"<{id}>\"");
+        Ok(super::messages::searched(self.cmd(&[Part::Text(&cmd)])?))
+    }
+
     /// `CREATE` a folder (its name as the server knows it).
     pub(super) fn create(&mut self, wire: &str) -> Result<()> {
         if wire.is_empty() || wire.chars().any(char::is_control) {

@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use mailalm_model::{Account, AccountId};
 use serde::{Deserialize, Serialize};
 
+use crate::signatures::Writing;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
@@ -17,6 +19,23 @@ pub struct Settings {
     /// Searches kept as search folders (PLAN.md, section 6).
     #[serde(default)]
     pub saved_searches: Vec<mailalm_model::SavedSearch>,
+    /// Each account's signature, templates and quick replies (C4).
+    #[serde(default)]
+    pub writing: Vec<Writing>,
+    /// How long a message sent waits, with its Undo button (C1): 5 to 30 seconds; 0 is the
+    /// default (10).
+    #[serde(default)]
+    pub undo_send_seconds: u32,
+    /// New messages are written in plain text rather than rich text.
+    #[serde(default)]
+    pub plain_text: bool,
+    /// Antidote's Anti-Oups! checks each message before it is sent (when Antidote is installed).
+    #[serde(default)]
+    pub anti_oups: bool,
+    /// Senders whose pictures from the internet are loaded without asking (addresses, lower
+    /// case).
+    #[serde(default)]
+    pub picture_senders: Vec<String>,
 }
 
 impl Settings {
@@ -52,7 +71,7 @@ impl Settings {
                 let mut aside = path.clone().into_os_string();
                 aside.push(".damaged");
                 let _ = std::fs::rename(&path, PathBuf::from(aside));
-                (Self { accounts: Vec::new(), next_id: 1, saved_searches: Vec::new() }, Some(format!("The settings file was damaged and was set aside: {e}")))
+                (Self { next_id: 1, ..Self::default() }, Some(format!("The settings file was damaged and was set aside: {e}")))
             }
         }
     }
@@ -80,5 +99,44 @@ impl Settings {
 
     pub fn remove(&mut self, id: AccountId) {
         self.accounts.retain(|a| a.id != id);
+        self.writing.retain(|w| w.account != id);
+    }
+
+    /// The undo delay, in seconds.
+    pub fn undo_delay(&self) -> u32 {
+        crate::send_queue::undo_delay(self.undo_send_seconds)
+    }
+
+    /// An account's signature, templates and quick replies, if it has any.
+    pub fn writing(&self, id: AccountId) -> Option<&Writing> {
+        self.writing.iter().find(|w| w.account == id)
+    }
+
+    /// An account's signature, templates and quick replies, made empty the first time.
+    pub fn writing_mut(&mut self, id: AccountId) -> &mut Writing {
+        let at = match self.writing.iter().position(|w| w.account == id) {
+            Some(at) => at,
+            None => {
+                self.writing.push(Writing::new(id));
+                self.writing.len() - 1
+            }
+        };
+        &mut self.writing[at]
+    }
+
+    /// Whether this sender's pictures from the internet load without asking.
+    pub fn pictures_approved(&self, address: &str) -> bool {
+        let a = address.trim().to_lowercase();
+        !a.is_empty() && self.picture_senders.iter().any(|s| *s == a)
+    }
+
+    /// Approves (or no longer approves) a sender's pictures.
+    pub fn set_pictures_approved(&mut self, address: &str, approved: bool) {
+        let a = address.trim().to_lowercase();
+        self.picture_senders.retain(|s| *s != a);
+        if approved && !a.is_empty() {
+            self.picture_senders.push(a);
+            self.picture_senders.sort();
+        }
     }
 }

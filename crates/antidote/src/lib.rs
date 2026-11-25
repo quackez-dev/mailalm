@@ -28,6 +28,7 @@ mod ws;
 #[cfg(test)]
 mod test_server;
 
+pub use locate::installed;
 pub use offsets::Unit;
 pub use protocol::{AntiOupsReply, Configuration, Detection, DocumentType, StyleKind, Tool};
 pub use session::{Session, Style, Texteur, Zone};

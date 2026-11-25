@@ -1,5 +1,7 @@
 //! The egui side: [`RichEditor`], the widget that shows an [`Editor`] and turns the mouse, the
-//! keyboard and the input method into its edits, and [`toolbar`].
+//! keyboard and the input method into its edits, and [`toolbar`]. Read-only, it shows a received
+//! message: text can be selected and copied, and the links say when they are pointed at or
+//! clicked ([`Editor::hovered_link`], [`Editor::take_clicked_link`]); nothing is opened here.
 //!
 //! Each paragraph is laid out on its own with egui's text layout (one section per run), so the
 //! caret, the selection and the clicks map to (paragraph, character) through the galleys. The
@@ -21,6 +23,14 @@ use egui::{
 
 use crate::editor::{Editor, ListKind};
 use crate::model::{Color, Document, Format, Kind, Link, Mark, Paragraph, Pos, Selection};
+
+/// A link of a read-only document the pointer is on, or that was clicked: its target and the
+/// text that shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkHit {
+    pub link: Link,
+    pub text: String,
+}
 use crate::picture;
 
 /// How far a quote level moves the text right.
@@ -53,6 +63,10 @@ pub(crate) struct ViewState {
     h_pos: Option<f32>,
     ime_generation: u64,
     was_focused: bool,
+    /// Read-only: the link under the pointer in the last frame.
+    hovered_link: Option<LinkHit>,
+    /// Read-only: the link clicked, until the window takes it.
+    clicked_link: Option<LinkHit>,
 }
 
 impl fmt::Debug for ViewState {
@@ -216,6 +230,31 @@ fn layout_paragraph(ui: &Ui, p: &Paragraph, width: f32, look: &Look) -> (Arc<Gal
 }
 
 impl Layout {
+    /// The character under `point` (relative to the widget's top left), if it is on one: its
+    /// paragraph and its offset.
+    fn char_at(&self, point: Vec2) -> Option<Pos> {
+        let index = self.blocks.iter().position(|b| point.y >= b.top && point.y < b.top + b.height)?;
+        let block = self.blocks.get(index)?;
+        if block.image.is_some() {
+            return None;
+        }
+        let g = block.galley.as_ref()?;
+        let local = pos2(point.x - block.left, point.y - block.top);
+        let near = g.cursor_from_pos(local.to_vec2()).index.0;
+        for i in [near.saturating_sub(1), near] {
+            if i >= block.len {
+                continue;
+            }
+            let a = g.pos_from_cursor(CCursor::new(i));
+            let b = g.pos_from_cursor(CCursor::new(i + 1));
+            // The character's box, when it starts and ends on the same row.
+            if (a.min.y - b.min.y).abs() < 0.5 && Rect::from_min_max(a.min, pos2(b.min.x, a.max.y)).contains(local) {
+                return Some(Pos::new(index, i));
+            }
+        }
+        None
+    }
+
     /// The position at `point` (relative to the widget's top left).
     fn pos_at(&self, point: Vec2) -> Pos {
         let index = self
@@ -296,11 +335,20 @@ pub struct RichEditor<'a> {
     font_size: Option<f32>,
     bold_family: Option<FontFamily>,
     hint: Option<String>,
+    read_only: bool,
 }
 
 impl<'a> RichEditor<'a> {
     pub fn new(editor: &'a mut Editor) -> Self {
-        RichEditor { editor, id: None, min_height: 120.0, font_size: None, bold_family: None, hint: None }
+        RichEditor { editor, id: None, min_height: 120.0, font_size: None, bold_family: None, hint: None, read_only: false }
+    }
+
+    /// Shows the document without changing it (a received message): text can be selected and
+    /// copied (Ctrl+C, Ctrl+A), nothing typed, pasted or dropped changes it, and the links say
+    /// when they are pointed at or clicked.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
     }
 
     /// The widget's id (one per compose window).
@@ -334,7 +382,7 @@ impl<'a> RichEditor<'a> {
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
-        let RichEditor { editor, id, min_height, font_size, bold_family, hint } = self;
+        let RichEditor { editor, id, min_height, font_size, bold_family, hint, read_only } = self;
         let id = id.unwrap_or_else(|| ui.make_persistent_id("mailalm-rich-editor"));
         editor.view.id = Some(id);
         let visuals = ui.visuals().clone();
@@ -359,10 +407,19 @@ impl<'a> RichEditor<'a> {
         let revision = editor.revision();
         let selection = editor.selection();
 
-        // The mouse.
+        // The mouse; a read-only document's links.
+        let hovered_link = if read_only {
+            response.hover_pos().and_then(|p| lay.char_at(p - origin)).and_then(|pos| editor.link_at(pos)).map(|(link, text)| LinkHit { link, text })
+        } else {
+            None
+        };
         if response.hovered() {
-            ui.set_cursor_icon(CursorIcon::Text);
+            ui.set_cursor_icon(if hovered_link.is_some() { CursorIcon::PointingHand } else { CursorIcon::Text });
         }
+        if read_only && response.clicked() && hovered_link.is_some() {
+            editor.view.clicked_link = hovered_link.clone();
+        }
+        editor.view.hovered_link = hovered_link;
         if let Some(pointer) = response.interact_pointer_pos() {
             let pos = lay.pos_at(pointer - origin);
             let shift = ui.input(|i| i.modifiers.shift);
@@ -386,7 +443,21 @@ impl<'a> RichEditor<'a> {
 
         // The keyboard and the input method.
         let focused = ui.memory(|m| m.has_focus(id));
-        if focused {
+        if focused && read_only {
+            // Only copying.
+            let events = ui.input(|i| i.filtered_events(&EventFilter::default()));
+            for event in events {
+                match event {
+                    Event::Copy => {
+                        if let Some(text) = editor.copy() {
+                            ui.ctx().copy_text(text);
+                        }
+                    }
+                    Event::Key { key: Key::A, pressed: true, modifiers, .. } if modifiers.command && !modifiers.alt => editor.select_all(),
+                    _ => {}
+                }
+            }
+        } else if focused {
             let filter = EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: false };
             ui.memory_mut(|m| m.set_focus_lock_filter(id, filter));
             let events = ui.input(|i| i.filtered_events(&filter));
@@ -416,7 +487,7 @@ impl<'a> RichEditor<'a> {
             editor.view.last_interaction = now;
         }
         let caret = lay.caret_rect(editor.selection().head).translate(origin.to_vec2());
-        if focused && (changed || moved) {
+        if focused && !read_only && (changed || moved) {
             ui.scroll_to_rect(caret.expand(4.0), None);
         }
         if (changed || moved) && lay.height.max(min_height) != size.y {
@@ -426,7 +497,7 @@ impl<'a> RichEditor<'a> {
         let now_selection = editor.selection();
         let (doc, view) = editor.parts();
         paint(ui, doc, now_selection, &mut view.textures, &lay, &look, rect, hint.as_deref());
-        if focused {
+        if focused && !read_only {
             if ui.input(|i| i.focused) {
                 paint_text_cursor(ui, ui.painter(), caret, now - editor.view.last_interaction);
             }
@@ -677,6 +748,19 @@ fn paint_preedit(ui: &Ui, preedit: &str, caret: Rect, look: &Look) {
     painter.rect_filled(r.expand(1.0), 2.0, ui.visuals().extreme_bg_color);
     painter.galley(r.min, galley, look.text);
     painter.line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, look.text));
+}
+
+impl Editor {
+    /// Read-only: the link under the pointer in the last frame, to say where it goes.
+    pub fn hovered_link(&self) -> Option<&LinkHit> {
+        self.view.hovered_link.as_ref()
+    }
+
+    /// Read-only: the link clicked since the last call, if any. The widget opens nothing: the
+    /// window decides (and asks).
+    pub fn take_clicked_link(&mut self) -> Option<LinkHit> {
+        self.view.clicked_link.take()
+    }
 }
 
 /// What [`toolbar`] keeps between frames.

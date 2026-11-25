@@ -140,6 +140,12 @@ impl ImapSession {
         self.client.search_query(query)
     }
 
+    /// `UID SEARCH HEADER Message-ID` in the selected folder: the UIDs of the messages with this
+    /// Message-ID (with or without its angle brackets), to replace a draft saved before.
+    pub fn find_message_id(&mut self, message_id: &str) -> Result<Vec<u32>> {
+        self.client.search_message_id(message_id)
+    }
+
     /// `CREATE` a folder (its name as the server knows it: modified UTF-7, with the server's
     /// delimiter). A folder that is already there is the server's `NO` ([`NetError::Server`]).
     pub fn create(&mut self, wire: &str) -> Result<()> {

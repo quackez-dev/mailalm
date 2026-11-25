@@ -22,7 +22,7 @@ use mailalm_store::{FolderState, Store};
 use crate::ids::Ids;
 use crate::local::{self, sort_newest_first};
 use crate::pim_sync::{self, Memo};
-use crate::{Command, Event, Link, Start, Wake, Zones, find, later, rules, secrets, unsubscribe};
+use crate::{Command, Event, Link, drafts, Start, Wake, Zones, find, later, rules, secrets, unsubscribe};
 
 mod features;
 mod pim;
@@ -211,6 +211,8 @@ impl Outlook {
                     self.send_message(message, commands);
                 }
             }
+            Command::SaveDraft { compose, message, replace } => drafts::save(self, compose, &message, replace.as_deref(), commands),
+            Command::DeleteDraft(draft) => drafts::delete(self, &draft, commands),
             Command::Stop => self.stop = true,
         }
     }
@@ -620,7 +622,7 @@ impl Outlook {
                 self.emit(Event::Summaries { account: self.id, folder: path.to_owned(), summaries });
             }
         }
-        self.emit(Event::Message { account: self.id, folder: path.to_owned(), uid, parsed: Box::new(parsed) });
+        self.emit(Event::Message { account: self.id, folder: path.to_owned(), uid, parsed: Box::new(parsed), html: drafts::html_of(&raw) });
     }
 
     // ---- Changes ----

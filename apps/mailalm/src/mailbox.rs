@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use mailalm_engine::{Event, Link, Reviewed, SenderRule};
-use mailalm_mime::Parsed;
+use mailalm_mime::{HtmlBody, Parsed};
 use mailalm_model::{AccountId, Folder, FolderRole, Summary};
 
 /// One account, as the interface shows it.
@@ -52,6 +52,8 @@ impl AccountState {
 pub struct Reading {
     pub key: MessageKey,
     pub parsed: Option<Box<Parsed>>,
+    /// Its HTML version, until the reading pane takes it.
+    pub html: Option<Box<HtmlBody>>,
     pub error: Option<String>,
 }
 
@@ -74,7 +76,7 @@ pub struct Mailboxes {
 /// What an event means for the rest of the interface, beyond the state kept here.
 pub enum Outcome {
     None,
-    Message { key: MessageKey, parsed: Box<Parsed> },
+    Message { key: MessageKey, parsed: Box<Parsed>, html: Option<Box<HtmlBody>> },
     MessageUnavailable { key: MessageKey, reason: String },
     Notice(String),
     Error(String),
@@ -82,6 +84,8 @@ pub enum Outcome {
     SearchResults { account: AccountId, id: u64, hits: Vec<(String, Summary)> },
     /// An attachment the user asked to review.
     Attachment { key: MessageKey, index: usize, result: Result<Box<Reviewed>, String> },
+    /// A compose window's draft saved on the server, or not.
+    Draft { compose: u64, result: Result<String, String> },
 }
 
 impl Mailboxes {
@@ -109,7 +113,8 @@ impl Mailboxes {
                 self.generation += 1;
                 Outcome::None
             }
-            Event::Message { folder, uid, parsed, .. } => Outcome::Message { key: MessageKey { account, folder, uid }, parsed },
+            Event::Message { folder, uid, parsed, html, .. } => Outcome::Message { key: MessageKey { account, folder, uid }, parsed, html },
+            Event::Draft { compose, result, .. } => Outcome::Draft { compose, result },
             Event::MessageUnavailable { folder, uid, reason, .. } => Outcome::MessageUnavailable { key: MessageKey { account, folder, uid }, reason },
             Event::Link { link, detail, .. } => {
                 state.link = link;

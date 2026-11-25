@@ -11,7 +11,7 @@ use mailalm_model::{Flags, FolderScope};
 use mailalm_net::oauth::now_unix;
 
 use super::*;
-use crate::{LaterCommand, RuleCommand, find, later, rules};
+use crate::{LaterCommand, RuleCommand, drafts, find, later, rules};
 
 struct Fake {
     store: Store,
@@ -20,6 +20,8 @@ struct Fake {
     changes: Vec<Change>,
     next_uid: u32,
     server_rules: Vec<Rule>,
+    /// The drafts saved: (Message-ID, the draft it replaced).
+    drafts: Vec<(String, Option<String>)>,
 }
 
 fn folder(path: &str, role: FolderRole) -> Folder {
@@ -49,7 +51,7 @@ impl Fake {
             folder("Trash", FolderRole::Trash),
             folder("News", FolderRole::Other),
         ];
-        Fake { store, folders, told: RefCell::new(Vec::new()), changes: Vec::new(), next_uid: 100, server_rules: Vec::new() }
+        Fake { store, folders, told: RefCell::new(Vec::new()), changes: Vec::new(), next_uid: 100, server_rules: Vec::new(), drafts: Vec::new() }
     }
 
     fn put(&self, path: &str, s: Summary) {
@@ -70,6 +72,16 @@ impl MailWorker for Fake {
 
     fn cache(&self) -> &Store {
         &self.store
+    }
+
+    fn store_draft(&mut self, _raw: &[u8], message_id: &str, replace: Option<&str>) -> Result<String, String> {
+        self.drafts.push((message_id.to_owned(), replace.map(str::to_owned)));
+        Ok(message_id.to_owned())
+    }
+
+    fn drop_draft(&mut self, draft: &str) -> Result<(), String> {
+        self.drafts.retain(|(id, _)| id != draft);
+        Ok(())
     }
 
     fn tell(&self, e: Event) {
@@ -303,4 +315,27 @@ fn find_searches_the_cache_then_the_server() {
     let told = f.told();
     assert!(matches!(&told[0], Event::SearchResults { hits, .. } if hits.len() == 2), "{told:?}");
     assert!(matches!(&told[1], Event::ServerResults { result: Ok(hits), .. } if hits.is_empty()), "{told:?}");
+}
+
+/// A draft is written (without any recipient yet), saved in place of the one before, said to
+/// the compose window, and deleted once sent.
+#[test]
+fn drafts_are_saved_replaced_and_deleted() {
+    let mut w = Fake::new("drafts");
+    let (_tx, rx) = mpsc::channel::<Command>();
+    let message = mailalm_mime::Outgoing { from: Person { name: String::new(), address: "alex@example.com".into() }, subject: "Plan".into(), ..Default::default() };
+    drafts::save(&mut w, 7, &message, None, &rx);
+    let told = w.told();
+    let Some(Event::Draft { compose: 7, result: Ok(first), .. }) = told.first() else { panic!("{told:?}") };
+    assert!(first.ends_with("@example.com"), "named by its Message-ID");
+    drafts::save(&mut w, 7, &message, Some(first.as_str()), &rx);
+    assert_eq!(w.drafts.last().and_then(|(_, replaced)| replaced.clone()).as_deref(), Some(first.as_str()));
+    let told = w.told();
+    let Some(Event::Draft { result: Ok(second), .. }) = told.first() else { panic!("{told:?}") };
+    drafts::delete(&mut w, second, &rx);
+    assert!(!w.drafts.iter().any(|(id, _)| id == second));
+    // An address that isn't one: said, nothing saved.
+    let bad = mailalm_mime::Outgoing { to: vec![Person { name: String::new(), address: "nope".into() }], ..message };
+    drafts::save(&mut w, 8, &bad, None, &rx);
+    assert!(matches!(w.told().first(), Some(Event::Draft { compose: 8, result: Err(e), .. }) if e.contains("nope")));
 }

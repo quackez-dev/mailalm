@@ -510,6 +510,40 @@ pub fn one_click_unsubscribe(url: &str) -> Result<u16> {
     }
 }
 
+/// The longest web picture address fetched.
+const MAX_PICTURE_URL: usize = 4096;
+
+/// A picture a received message names on the web (`<img src="https://…">`), fetched only when
+/// the user asked to load that message's pictures or approved its sender (PLAN.md section 10.2,
+/// docs/domaines.md): any domain the sender chose.
+///
+/// What goes out is a `GET` of that address and the usual headers (`Host`, `User-Agent`,
+/// `Accept`), nothing else: no cookie (MailALM keeps none), no `Referer`, no credentials, no
+/// address of the user's. On a connection of its own; a redirect is not followed (an error); only
+/// a `200` is taken; the body is read up to `max` bytes, more is [`NetError::TooLarge`]. Plain
+/// `http://`, an IP address, and `localhost` or a name of the local network are refused before
+/// anything is sent. What comes back is hostile: the caller checks its type from its content and
+/// decodes it with limits.
+pub fn fetch_picture(url: &str, max: usize) -> Result<Vec<u8>> {
+    if url.len() > MAX_PICTURE_URL || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(NetError::Invalid("not a picture address MailALM fetches".into()));
+    }
+    let u = Url::parse(url)?;
+    if !u.https && !cfg!(test) {
+        return Err(NetError::Invalid("pictures are fetched over https only".into()));
+    }
+    if !cfg!(test) && local_host(&u.host) {
+        return Err(NetError::Invalid("a picture is never fetched from this computer or its network".into()));
+    }
+    let req = Request::get(url, max).header("Accept", "image/png,image/jpeg,image/gif");
+    let resp = send(&req)?;
+    match resp.status {
+        200 => Ok(resp.body),
+        300..=399 => Err(NetError::Server(format!("the picture's server answered with a redirect (HTTP {}), which MailALM doesn't follow", resp.status))),
+        s => Err(NetError::Server(format!("the picture's server answered HTTP {s}"))),
+    }
+}
+
 /// Whether a host is an IP address, `localhost`, or a name of the local network (`.local`,
 /// `.localhost`, `.internal`, `.lan`, `.home.arpa`): never one a list's server has.
 fn local_host(host: &str) -> bool {

@@ -16,6 +16,11 @@ mailalm-mime = { workspace = true }
 mailalm-store = { workspace = true }
 mailalm-engine = { workspace = true }
 mailalm-safety = { workspace = true }
+# The rich-text editor (writing, and showing an HTML message read-only), Antidote's bridge, and the
+# network layer for the pictures from the internet the user asks for (phase 7).
+mailalm-compose = { workspace = true }
+mailalm-antidote = { workspace = true }
+mailalm-net = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = { workspace = true }

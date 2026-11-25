@@ -28,6 +28,26 @@ impl MailWorker for Outlook {
         &self.store
     }
 
+    /// A Graph message made from the MIME source, which Graph puts in Drafts; the draft saved
+    /// before is then deleted. The draft is named by its immutable id.
+    fn store_draft(&mut self, raw: &[u8], _message_id: &str, replace: Option<&str>) -> Result<String, String> {
+        if raw.len() > crate::OUTLOOK_MESSAGE_LIMIT {
+            return Err(format!("it weighs {:.1} MB, and MailALM saves at most {:.0} MB to Outlook for now", raw.len() as f64 / 1e6, crate::OUTLOOK_MESSAGE_LIMIT as f64 / 1e6));
+        }
+        let id = self.call(|c| c.create_draft(raw)).map_err(|e| describe(&e))?;
+        if let Some(old) = replace.filter(|old| *old != id)
+            && let Err(e) = self.drop_draft(old)
+        {
+            log::warn!("the draft saved before could not be deleted: {e}");
+        }
+        Ok(id)
+    }
+
+    fn drop_draft(&mut self, draft: &str) -> Result<(), String> {
+        let ids = [draft.to_owned()];
+        self.call(|c| c.delete(&ids)).map_err(|e| describe(&e))
+    }
+
     fn tell(&self, e: Event) {
         self.emit(e);
     }

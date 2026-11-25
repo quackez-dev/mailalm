@@ -41,6 +41,12 @@ pub(crate) trait MailWorker {
     /// The server's search in `folders` (`whole`: the whole account was asked, which a server
     /// may search at once): the messages found, numbered as the cache numbers them, newest first.
     fn server_search(&mut self, query: &Query, folders: &[Folder], whole: bool) -> Result<Vec<(String, Summary)>, String>;
+    /// Keeps a draft on the server (its MIME source and its Message-ID), in place of the draft
+    /// `replace` saved before: what names the draft now. The errors are as the user reads them.
+    fn store_draft(&mut self, raw: &[u8], message_id: &str, replace: Option<&str>) -> Result<String, String>;
+    /// Deletes a draft saved before (what [`MailWorker::store_draft`] gave); one already gone
+    /// counts as done.
+    fn drop_draft(&mut self, draft: &str) -> Result<(), String>;
 }
 
 /// The folder of a role, among the worker's.

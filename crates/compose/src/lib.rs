@@ -9,11 +9,14 @@
 //! - The edits ([`Editor`]): typing, deleting, Enter (lists go on, an empty item ends them),
 //!   marks, kinds, indenting, links, pictures, copy and paste, word moves, undo and redo. All
 //!   pure, so they are tested without a window.
-//! - The widget ([`RichEditor`]) and its [`toolbar`].
+//! - The widget ([`RichEditor`]) and its [`toolbar`]; read-only, it shows a received message,
+//!   its links reported to the window ([`LinkHit`]), never opened here.
 //! - What is sent: [`to_html`] (a small, safe HTML), [`plain_text`] (its alternative) and
 //!   [`html_body`] (both, with the pictures, for `mailalm_mime::Outgoing::html`).
 //! - What is quoted or pasted: [`import_html`], from untrusted HTML to the model, fetching
-//!   nothing.
+//!   nothing; [`import_message_html`] for the reading pane, which lists the web pictures a
+//!   message names ([`RemoteImage`]) and shows those the window fetched after the user asked.
+//! - Where a signature goes ([`signature_slot`]): above a reply's quoted text.
 //! - What a corrector needs: [`TextMap`] and [`Editor::replace_text`], over the document's text
 //!   in UTF-8 byte offsets (Antidote's `Texteur` is built on them by the compose window).
 #![cfg_attr(test, allow(clippy::unwrap_used))]
@@ -26,13 +29,13 @@ mod picture;
 mod text;
 mod widget;
 
-pub use editor::{Editor, ListKind, MAX_PARAGRAPHS, MAX_TEXT, MAX_UNDO};
-pub use html_in::{MAX_IMPORT_HTML, import_html};
+pub use editor::{Editor, ListKind, MAX_PARAGRAPHS, MAX_TEXT, MAX_UNDO, signature_slot};
+pub use html_in::{Imported, MAX_IMPORT_HTML, RemoteImage, import_html, import_message_html};
 pub use html_out::{html_body, plain_text, to_html};
 pub use model::{Color, Document, Format, Kind, Link, MAX_LEVEL, MAX_QUOTE, Mark, OBJECT, Paragraph, Pos, Run, Selection};
 pub use picture::{ImageError, InlineImage, MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS, MAX_IMAGE_SIDE, MAX_IMAGES, MAX_IMAGES_BYTES, is_valid_content_id, sniff};
 pub use text::TextMap;
-pub use widget::{RichEditor, ToolbarRequest, ToolbarState, toolbar};
+pub use widget::{LinkHit, RichEditor, ToolbarRequest, ToolbarState, toolbar};
 
 #[cfg(test)]
 mod tests;

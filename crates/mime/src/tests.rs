@@ -414,3 +414,20 @@ fn a_picture_with_an_unsafe_content_id_or_type_is_refused() {
     }
     assert!(build(&wrong_type).is_err());
 }
+
+/// A draft may have no recipient yet, and keeps its Bcc; a message to send needs one.
+#[test]
+fn a_draft_needs_no_recipient() {
+    let mut out = Outgoing { from: Person { name: String::new(), address: "alex@videotron.ca".into() }, subject: "Plan".into(), text: "Notes".into(), ..Outgoing::default() };
+    assert!(build(&out).is_err());
+    let (raw, id) = build_draft(&out).expect("a draft");
+    assert!(id.ends_with("@videotron.ca"));
+    let parsed = parse(&raw).expect("parsed");
+    assert_eq!((parsed.subject.as_str(), parsed.text.trim()), ("Plan", "Notes"));
+    out.bcc = vec![Person { name: String::new(), address: "boss@example.com".into() }];
+    let (raw, _) = build_draft(&out).expect("a draft");
+    let text = String::from_utf8_lossy(&raw);
+    assert!(text.lines().any(|l| l.starts_with("Bcc:") && l.contains("boss@example.com")), "{text}");
+    out.to = vec![Person { name: String::new(), address: "not an address".into() }];
+    assert!(build_draft(&out).is_err(), "addresses are still checked");
+}

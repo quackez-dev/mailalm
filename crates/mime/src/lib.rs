@@ -608,18 +608,24 @@ pub fn mentions_attachment(text: &str) -> bool {
 /// Bcc header is not written: Bcc recipients are only in the envelope. Returns the message and its
 /// Message-ID.
 pub fn build(out: &Outgoing) -> Result<(Vec<u8>, String), String> {
-    write(out, false)
+    write(out, false, false)
 }
 
 /// Writes the message for a provider's API (Microsoft Graph `sendMail`, Gmail `messages.send`),
 /// which has no envelope: it takes the recipients from the To, Cc and Bcc headers, and removes
 /// the Bcc header from what it delivers. Without it, Bcc recipients would get nothing.
 pub fn build_for_api(out: &Outgoing) -> Result<(Vec<u8>, String), String> {
-    write(out, true)
+    write(out, true, false)
 }
 
-fn write(out: &Outgoing, with_bcc: bool) -> Result<(Vec<u8>, String), String> {
-    if out.to.is_empty() && out.cc.is_empty() && out.bcc.is_empty() {
+/// Writes a draft, to keep on the account's server: as [`build_for_api`] (the Bcc header kept,
+/// so the draft remembers it), and it may have no recipient yet.
+pub fn build_draft(out: &Outgoing) -> Result<(Vec<u8>, String), String> {
+    write(out, true, true)
+}
+
+fn write(out: &Outgoing, with_bcc: bool, draft: bool) -> Result<(Vec<u8>, String), String> {
+    if !draft && out.to.is_empty() && out.cc.is_empty() && out.bcc.is_empty() {
         return Err("The message has no recipient.".to_owned());
     }
     for p in std::iter::once(&out.from).chain(&out.to).chain(&out.cc).chain(&out.bcc) {

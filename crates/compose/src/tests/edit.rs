@@ -567,3 +567,49 @@ fn random_edits_keep_the_document_valid_and_undo_back_to_the_start() {
         assert_eq!(ed.document(), &start, "seed {seed}: undo all the way gives the start back");
     }
 }
+
+/// A new signature goes above a reply's quoted text and its attribution line, the first two
+/// lines staying above it; with nothing quoted, at the end.
+#[test]
+fn a_new_signature_goes_above_the_quote() {
+    let mut d = doc(&["", "", "", "On Monday, Zoe wrote:", "a", "b"]);
+    for p in d.paragraphs.iter_mut().skip(4) {
+        p.quote = 1;
+    }
+    assert_eq!(signature_slot(&d), 2);
+    let mut ed = Editor::from_document(d);
+    ed.set_signature(Some(&doc(&["Alex", "Videotron"])));
+    assert_eq!(texts(&ed), ["", "", "Alex", "Videotron", "", "On Monday, Zoe wrote:", "a", "b"]);
+    assert!(ed.document().paragraphs[2].signature && ed.document().paragraphs[3].signature && !ed.document().paragraphs[4].signature);
+    // Switched to another account's: in the same place.
+    ed.set_signature(Some(&doc(&["Bob"])));
+    assert_eq!(texts(&ed), ["", "", "Bob", "", "On Monday, Zoe wrote:", "a", "b"]);
+    // A forward's quote without an attribution line; text typed above it stays above.
+    let mut d = doc(&["Hello", "", "From: Zoe", "Hi"]);
+    for p in d.paragraphs.iter_mut().skip(2) {
+        p.quote = 1;
+    }
+    assert_eq!(signature_slot(&d), 2);
+    assert_eq!(signature_slot(&doc(&["Hi", "there", "you"])), 3);
+    ed.check();
+}
+
+/// What a reader sees of a link: its target and all the text that carries it.
+#[test]
+fn the_link_under_a_character() {
+    let site = Format { link: Link::parse("https://bank.example/"), ..Format::default() };
+    let bold_site = Format { bold: true, ..site.clone() };
+    let other = Format { link: Link::parse("https://other.example/"), ..Format::default() };
+    let d = Document::from_parts(
+        vec![Paragraph::new(vec![Run::plain("see "), Run::new("my ", site.clone()), Run::new("bank", bold_site), Run::new("x", other), Run::plain(" ok")])],
+        Vec::new(),
+    );
+    let ed = Editor::from_document(d);
+    let (link, text) = ed.link_at(at(0, 8)).unwrap();
+    assert_eq!((link.as_str(), text.as_str()), ("https://bank.example/", "my bank"));
+    assert_eq!(ed.link_at(at(0, 4)).map(|(_, t)| t).as_deref(), Some("my bank"));
+    assert_eq!(ed.link_at(at(0, 11)).map(|(l, t)| (l.as_str().to_owned(), t)), Some(("https://other.example/".to_owned(), "x".to_owned())));
+    assert_eq!(ed.link_at(at(0, 2)), None, "plain text");
+    assert_eq!(ed.link_at(at(0, 99)), None);
+    assert_eq!(ed.link_at(at(3, 0)), None);
+}
