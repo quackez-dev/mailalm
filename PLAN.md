@@ -322,8 +322,11 @@ clic.
 ## 11. Serveur MCP (décision Q12)
 
 - Un exécutable `mailalm-mcp` (MCP sur stdio), relié à MailALM en marche par un canal local protégé par une clé
-  aléatoire. C'est le modèle de WordCraft (`mcp` + `control-key`). Aucun port réseau n'est ouvert. Désactivé par
-  défaut.
+  aléatoire. C'est le modèle de WordCraft (`mcp` + `control-key`). Désactivé par défaut.
+- Canal (décision du 2026-11-25) : TCP sur `127.0.0.1` seulement, port choisi par le système, comme WordCraft
+  (pas de tube nommé). MailALM n'écoute que si le MCP est activé dans ses réglages. La clé (256 bits tirés par
+  `ring`) et le port sont dans `%LOCALAPPDATA%\MailALM` ; chaque requête porte la clé, comparée en temps
+  constant ; une clé fausse est refusée et journalisée ; seuls les pairs `127.0.0.1` sont servis.
 - Outils :
   - **lecture** : lister comptes et dossiers, chercher, lire un message ou un fil, lister les pièces jointes
     (métadonnées seulement), lire l'agenda, les disponibilités, les tâches, les contacts ;

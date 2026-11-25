@@ -1,0 +1,21 @@
+[package]
+name = "mailalm-control"
+description = "MailALM's control channel for its MCP server: the key and port files, a JSON-lines channel on 127.0.0.1 only (server side for the app, client side for mailalm-mcp), the tool catalog, the app-side adapter and the call journal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Requests, answers and the tool catalog are JSON.
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The control key: 32 random bytes from the system (already built for rustls).
+ring = { workspace = true }
+# %LOCALAPPDATA%\MailALM, where the key and port files are.
+dirs = { workspace = true }
+log = { workspace = true }

@@ -2315,6 +2315,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mailalm-control"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "log",
+ "ring",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mailalm-engine"
 version = "0.1.0"
 dependencies = [
@@ -2325,6 +2336,14 @@ dependencies = [
  "mailalm-net",
  "mailalm-safety",
  "mailalm-store",
+]
+
+[[package]]
+name = "mailalm-mcp"
+version = "0.1.0"
+dependencies = [
+ "mailalm-control",
+ "serde_json",
 ]
 
 [[package]]

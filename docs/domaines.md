@@ -100,3 +100,31 @@ Aucun nouveau domaine.
   connecte à ce port **sur ce PC seulement**. Le code ne peut pas viser un autre hôte.
 - Le texte envoyé (zones à corriger, objet, corps et destinataires pour l'Anti-Oups!) va à l'Antidote installé sur
   le PC. **Aucun texte ne sort du PC** par MailALM ; ce qu'Antidote fait ensuite relève d'Antidote.
+
+## Phase 9 : serveur MCP
+
+| Adresse | Port | Protocole | Quand |
+|---|---|---|---|
+| `127.0.0.1` (ce PC) | port libre choisi par le système au démarrage du canal, écrit dans `%LOCALAPPDATA%\MailALM\control-port` | TCP local, une ligne JSON par requête et par réponse | Seulement si l'accès MCP est **activé** dans les réglages de MailALM (il est **désactivé par défaut**) : `mailalm-mcp`, lancé par l'agent, y transmet chaque appel d'outil |
+
+- **Aucun nouveau domaine.** Le canal ne sort pas du PC : MailALM n'écoute que sur `127.0.0.1` (jamais `0.0.0.0`
+  ni `::1`) et ferme toute connexion dont l'adresse n'est pas `127.0.0.1`. `mailalm-mcp` ne se connecte qu'à
+  `127.0.0.1`.
+- **Clé** : à chaque démarrage du canal, MailALM tire 32 octets aléatoires (`ring`) et les écrit en hexadécimal
+  dans `%LOCALAPPDATA%\MailALM\control-key`, dans le profil de l'utilisateur. Chaque requête porte la clé ; elle
+  est comparée en temps constant, et une clé fausse ou absente est refusée et journalisée. Les deux fichiers sont
+  effacés quand l'accès MCP est désactivé ou que MailALM se ferme. Un fichier de clé qui n'a pas exactement
+  64 caractères hexadécimaux est refusé.
+- **Limites** : une requête par connexion, une ligne de 4 Mio au plus, envoyée en 10 s au plus ; 8 connexions à la
+  fois au plus. Une requête que MailALM n'a pas prise en 30 s n'est jamais exécutée ; une action sensible que
+  l'utilisateur n'a pas confirmée en 5 minutes non plus.
+- **Ce que l'agent reçoit** : le texte des courriels (jamais le HTML ni le contenu des pièces jointes), toujours
+  dans un champ `external_content` précédé d'un avertissement : c'est du texte écrit par des tiers, pas des
+  consignes. Les comptes que l'utilisateur rend invisibles au MCP sont refusés, et retirés des réponses qui
+  couvrent tous les comptes.
+- **Ce que l'agent peut faire sans confirmation** : lire, créer un brouillon, classer, marquer, ajouter une
+  catégorie, créer un événement provisoire sans invités (aucune invitation ne part) ou une tâche. **Avec
+  confirmation dans MailALM** : envoyer, supprimer, bloquer un expéditeur, répondre à une invitation, changer une
+  règle (jamais de transfert), et appliquer un tri proposé (ligne par ligne).
+- Ce que l'agent fait ensuite des données reçues relève de l'agent et de son fournisseur, pas de MailALM : c'est
+  pourquoi l'accès est désactivé par défaut et réglable compte par compte.

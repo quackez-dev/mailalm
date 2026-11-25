@@ -1,0 +1,15 @@
+[package]
+name = "mailalm-mcp"
+description = "MailALM's MCP server (Model Context Protocol, JSON-RPC 2.0 over stdio): the agent's tools, forwarded to the running MailALM over its control channel on 127.0.0.1"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mailalm-control = { workspace = true }
+serde_json = { workspace = true }

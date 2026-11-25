@@ -17,6 +17,7 @@ mailalm-store = { path = "crates/store" }
 mailalm-engine = { path = "crates/engine" }
 mailalm-safety = { path = "crates/safety" }
 mailalm-antidote = { path = "crates/antidote" }
+mailalm-control = { path = "crates/control" }
 
 # Every crate below is at the version, and with the features, MailCraft v0.41.0 uses: audited there
 # (audits/mailcraft), and the Cargo.lock is checked against that one (audits/mailalm/README.md).

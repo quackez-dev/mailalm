@@ -35,6 +35,11 @@ The full plan, in French: [PLAN.md](PLAN.md). Ideas kept for later: [IDEES.md](I
 
 ```
 apps/mailalm/     the desktop app (egui)
+apps/mailalm-mcp/ the MCP server an agent starts (stdio); it forwards each tool call to the running
+                  MailALM over 127.0.0.1 with a random key, only while MCP access is on (off by default)
+crates/control/   that channel (key and port files, server and client), the tool catalog, the app-side
+                  adapter (confirmations, accounts hidden from the MCP) and the call journal; partly
+                  adapted from WordCraft (see ATTRIBUTION.md)
 crates/model/     accounts, servers, folders, summaries, search queries, workspace rules; calendars,
                   events, recurrences, tasks, contacts, iCalendar invitations (pure, tested)
 crates/mime/      reading messages and writing outgoing mail (mail-parser, mail-builder, html2text)
