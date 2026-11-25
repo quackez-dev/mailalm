@@ -43,7 +43,31 @@ file starts with a comment naming its origin and what changed. The copy was read
 | `crates/model/src/pim/recurrence.rs` | `crates/model/src/pim/ical/recurrence.rs` | MIT OR Apache-2.0 |
 | `crates/model/src/pim/ical.rs` | content lines, escaping, folding, dates and durations from `crates/model/src/pim/ical.rs`; a `VTIMEZONE`'s offsets from `crates/model/src/pim/ical/zones.rs` | MIT OR Apache-2.0 |
 
-The phase 6 copies (calendars, recurrences, iCalendar) were audited in `audits/mailalm/reprise-pim.md`.
+| `crates/pst/src/lib.rs` | `crates/pst/src/lib.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/util.rs` | `crates/pst/src/util.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/crc.rs` | `crates/pst/src/crc.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/crypt.rs` | `crates/pst/src/crypt.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ndb.rs` | `crates/pst/src/ndb.rs`, with `crates/pst/src/ndb/sizes.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ndb/header.rs` | `crates/pst/src/ndb/header.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ndb/file.rs` | `crates/pst/src/ndb/file.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ndb/btree.rs` | `crates/pst/src/ndb/btree.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ndb/block.rs` | `crates/pst/src/ndb/block.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ltp.rs` | `crates/pst/src/ltp.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ltp/heap.rs` | `crates/pst/src/ltp/heap.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ltp/tree.rs` | `crates/pst/src/ltp/tree.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ltp/props.rs` | `crates/pst/src/ltp/props.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ltp/table.rs` | `crates/pst/src/ltp/table.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/ltp/value.rs` | `crates/pst/src/ltp/value.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/messaging.rs` | `crates/pst/src/messaging.rs` | MIT OR Apache-2.0 |
+| `crates/pst/src/messaging/object.rs` | `crates/pst/src/messaging/object.rs` | MIT OR Apache-2.0 |
+| `crates/print/src/lib.rs` | `crates/print/src/lib.rs` and `crates/print/src/layout.rs` (plain text only) | MIT OR Apache-2.0 |
+| `crates/print/src/tests.rs` | the tests of `crates/print/src/lib.rs` | MIT OR Apache-2.0 |
+
+The phase 6 copies (calendars, recurrences, iCalendar) were audited in `audits/mailalm/reprise-pim.md`. The phase 10
+copies (the Outlook data file reader, read only, and the PDF writer, plain text only) were audited in
+`audits/mailalm/reprise-pst.md` and `reprise-print.md`; `crates/porting`, which uses them, is MailALM's own. The PDF
+embeds egui's Ubuntu Light font (`epaint_default_fonts`, Ubuntu Font Licence 1.0, which allows embedding it in a
+document).
 
 The test certificates and keys in `crates/net/src/stream/trust/test_certs.rs` were made up for
 MailCraft's tests; they are compiled into tests only and are used nowhere else.

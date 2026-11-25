@@ -1,0 +1,139 @@
+// Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/pst/src/messaging/object.rs. MIT OR Apache-2.0.
+// Changed: read-only: the writer's nesting limit (`MAX_EMBEDDED_DEPTH`) is left out (the importer
+// caps the nesting it follows); tables are held as they are, not shared (`Rc`); an attachment's
+// data can be moved out (`take_data`).
+
+//! A message and its attachments (MS-PST 2.4.5, 2.4.6).
+
+use std::io;
+use std::rc::Rc;
+
+use super::{PstStore, node_properties};
+use crate::ltp::{Bytes, Heap, Properties, PropertyValue, Table, read_properties};
+use crate::ndb::{NID_TYPE_ASSOC_MESSAGE, NID_TYPE_ATTACHMENT, NID_TYPE_ATTACHMENT_TABLE, NID_TYPE_MASK, NID_TYPE_NORMAL_MESSAGE, NID_TYPE_RECIPIENT_TABLE, SubNodes};
+use crate::util::invalid;
+
+/// `PidTagAttachDataBinary` / `PidTagAttachDataObject`, and `PidTagAttachMethod`.
+const ATTACH_DATA: u16 = 0x3701;
+const ATTACH_METHOD: u16 = 0x3705;
+
+/// A message.
+pub struct Message {
+    store: Rc<PstStore>,
+    props: Properties,
+    subs: SubNodes,
+    recipients: Option<Table>,
+    attachments: Option<Table>,
+}
+
+impl Message {
+    /// The message at node `nid`.
+    pub fn read(store: Rc<PstStore>, nid: u32) -> io::Result<Rc<Message>> {
+        if !matches!(nid & NID_TYPE_MASK, NID_TYPE_NORMAL_MESSAGE | NID_TYPE_ASSOC_MESSAGE | NID_TYPE_ATTACHMENT) {
+            return Err(invalid(format!("node {nid:#x} isn't a message")));
+        }
+        let node = store.pst.node(nid)?;
+        Self::read_at(store, node.data, node.sub)
+    }
+
+    fn read_at(store: Rc<PstStore>, data: u64, sub: u64) -> io::Result<Rc<Message>> {
+        let (props, subs) = node_properties(&store.pst, data, sub)?;
+        let table = |kind: u32| -> io::Result<Option<Table>> {
+            let mut found = subs.iter().filter(|(nid, _)| *nid & NID_TYPE_MASK == kind);
+            match (found.next(), found.next()) {
+                (None, _) => Ok(None),
+                (Some((_, (d, s))), None) => Ok(Some(Table::read(store.pst.clone(), *d, *s)?)),
+                _ => Err(invalid("a message with two tables of one kind")),
+            }
+        };
+        let recipients = table(NID_TYPE_RECIPIENT_TABLE)?;
+        let attachments = table(NID_TYPE_ATTACHMENT_TABLE)?;
+        Ok(Rc::new(Message { store, props, subs, recipients, attachments }))
+    }
+
+    pub fn properties(&self) -> &Properties {
+        &self.props
+    }
+
+    pub fn recipient_table(&self) -> Option<&Table> {
+        self.recipients.as_ref()
+    }
+
+    pub fn attachment_table(&self) -> Option<&Table> {
+        self.attachments.as_ref()
+    }
+}
+
+/// What an attachment holds.
+pub enum AttachmentData {
+    /// A file's bytes (by value, or OLE storage).
+    Binary(Bytes),
+    /// A message attached to the message.
+    Message(Rc<Message>),
+}
+
+/// A message's attachment.
+pub struct Attachment {
+    props: Properties,
+    data: Option<AttachmentData>,
+}
+
+impl Attachment {
+    /// The attachment at subnode `nid` of `message`.
+    pub fn read(message: Rc<Message>, nid: u32) -> io::Result<Attachment> {
+        if nid & NID_TYPE_MASK != NID_TYPE_ATTACHMENT {
+            return Err(invalid(format!("node {nid:#x} isn't an attachment")));
+        }
+        let store = &message.store;
+        let (data, sub) = *message.subs.get(&nid).ok_or_else(|| invalid("an attachment isn't there"))?;
+        let heap = Heap::read(&store.pst, data)?;
+        // A damaged tree of its own doesn't lose it: what it holds may be in the message's.
+        let own = store.pst.subnodes(sub).unwrap_or_else(|e| {
+            log::warn!("an attachment's subnode tree can't be read: {e}");
+            SubNodes::new()
+        });
+        let mut props = read_properties(&store.pst, &heap, &own)?;
+        let method = match props.get(ATTACH_METHOD) {
+            Some(PropertyValue::Integer32(m)) => *m,
+            _ => return Err(invalid("an attachment that doesn't say what it holds")),
+        };
+        if !matches!(method, 0 | 1 | 2 | 4 | 5 | 6 | 7) {
+            return Err(invalid(format!("an attachment of method {method}, which none has")));
+        }
+        let object = |value: Option<&PropertyValue>| -> io::Result<(u64, u64)> {
+            let Some(PropertyValue::Object(o)) = value else { return Err(invalid("an attachment's object isn't there")) };
+            // In the attachment's own subnode tree, where MS-PST keeps it; else in the message's.
+            own.get(&o.node).or_else(|| message.subs.get(&o.node)).copied().ok_or_else(|| invalid("an attachment's object isn't there"))
+        };
+        let data = match method {
+            1 => match props.take(ATTACH_DATA) {
+                Some(PropertyValue::Binary(b)) => Some(AttachmentData::Binary(b)),
+                Some(PropertyValue::Null) => Some(AttachmentData::Binary(Bytes::default())),
+                _ => return Err(invalid("an attachment's bytes aren't there")),
+            },
+            5 => {
+                let (d, s) = object(props.get(ATTACH_DATA))?;
+                Some(AttachmentData::Message(Message::read_at(store.clone(), d, s)?))
+            }
+            6 => {
+                let (d, _) = object(props.get(ATTACH_DATA))?;
+                Some(AttachmentData::Binary(Bytes(store.pst.read_value(d)?)))
+            }
+            _ => None,
+        };
+        Ok(Attachment { props, data })
+    }
+
+    pub fn properties(&self) -> &Properties {
+        &self.props
+    }
+
+    pub fn data(&self) -> Option<&AttachmentData> {
+        self.data.as_ref()
+    }
+
+    /// What it holds, moved out.
+    pub fn take_data(&mut self) -> Option<AttachmentData> {
+        self.data.take()
+    }
+}

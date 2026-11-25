@@ -1,0 +1,21 @@
+[package]
+name = "mailalm-print"
+description = "MailALM print and export: a message's header and text laid out on A4 pages and written as a PDF (pure, no I/O)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Reads the font it embeds (glyphs, widths, metrics), and compresses the page and font streams:
+# the versions MailCraft v0.41.0's print crate uses (already in the lock through hayro and egui).
+skrifa = { workspace = true }
+miniz_oxide = { workspace = true }
+
+[dev-dependencies]
+# egui's own Ubuntu Light, to test embedding a font without reading the system's.
+epaint_default_fonts = { workspace = true }
