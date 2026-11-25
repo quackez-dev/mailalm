@@ -17,7 +17,7 @@
 # - Tests and build run offline.
 # - Windows only for now (PLAN.md, decision Q2).
 # - A push to main runs the tests and the release build. A `crafttools-v*` tag or a manual run also
-#   packages the portable zip with its SHA256SUMS as a one-day artifact: this repository is public,
+#   packages the MSI installer with its SHA256SUMS as a one-day artifact: this repository is public,
 #   so it is fetched to the PC and deleted right after the build. No release, no write token.
 name: MailALM build
 
@@ -95,15 +95,30 @@ jobs:
           if [ -z "$MAILALM_GOOGLE_CLIENT_ID" ] || [ -z "$MAILALM_GOOGLE_CLIENT_SECRET" ]; then echo "::warning::the Google client id or secret is not set: this build cannot sign in to Google"; fi
           cargo build --release --locked --offline -p mailalm -p mailalm-mcp --target x86_64-pc-windows-msvc
 
-      - name: Package (portable zip, unsigned)
+      # WiX 5.0.2 (MS-RL, no dependencies), from NuGet: its SHA-256 is checked before it is installed
+      # (audits/mailalm: verification download of 2026-11-25). It runs on the runner only.
+      - name: Install WiX 5.0.2 (checked)
+        if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force wixpkg | Out-Null
+          Invoke-WebRequest -Uri https://www.nuget.org/api/v2/package/wix/5.0.2 -OutFile wixpkg\wix.5.0.2.nupkg
+          $hash = (Get-FileHash wixpkg\wix.5.0.2.nupkg -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne 'f30ef0c74e2a986126539c5780be93ac24e8136eaf723b1937b26272703ae173') { throw "the WiX package is not the one checked: $hash" }
+          # Only that folder as a source: nothing else is fetched.
+          Set-Content -Path wixpkg\nuget.config -Encoding utf8 -Value '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /><add key="checked" value="." /></packageSources></configuration>'
+          dotnet tool install wix --version 5.0.2 --tool-path wixtool --configfile wixpkg\nuget.config
+
+      - name: Package (MSI, unsigned)
         if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           $name = "mailalm-$($env:GITHUB_REF_NAME -replace '[^A-Za-z0-9._-]', '-')-$($env:GITHUB_SHA.Substring(0, 8))-windows-x64"
-          New-Item -ItemType Directory -Force dist, "stage\$name" | Out-Null
-          Copy-Item target\x86_64-pc-windows-msvc\release\mailalm.exe "stage\$name\"
-          Copy-Item target\x86_64-pc-windows-msvc\release\mailalm-mcp.exe "stage\$name\"
-          Compress-Archive -Path "stage\$name" -DestinationPath "dist\$name.zip"
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          New-Item -ItemType Directory -Force dist | Out-Null
+          .\wixtool\wix.exe build packaging\mailalm.wxs -arch x64 -d "Version=$version" -d "BinDir=target\x86_64-pc-windows-msvc\release" -o "dist\$name.msi"
+          if (-not (Test-Path "dist\$name.msi")) { throw "no MSI was made" }
+          Remove-Item "dist\$name.wixpdb" -ErrorAction SilentlyContinue
 
       - name: Checksums
         if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')

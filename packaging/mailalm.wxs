@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MailALM's Windows installer (WiX 5). Built by the CI only (.github/workflows/build.yml):
+  wix build packaging/mailalm.wxs -arch x64 -d Version=<x.y.z> -d BinDir=<release folder>
+
+  - Installs for every user of the PC in Program Files\MailALM: mailalm.exe and mailalm-mcp.exe.
+  - A Start menu shortcut; uninstalled from Windows' settings like any program.
+  - The settings (%APPDATA%\MailALM), the cache (%LOCALAPPDATA%\MailALM) and the keychain entries
+    stay when MailALM is uninstalled: removing an account in MailALM removes its data.
+  - The UpgradeCode never changes: a newer MSI replaces the older one.
+  - No custom action runs: the installer only copies the two programs and adds the shortcut.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="MailALM"
+    Manufacturer="quackez-dev"
+    Version="$(var.Version)"
+    UpgradeCode="A3A292BC-45AD-4907-99EF-230D2EE55FD9"
+    Scope="perMachine"
+    Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of MailALM is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="MailALM.ico" SourceFile="apps\mailalm\windows\mailalm.ico" />
+    <Property Id="ARPPRODUCTICON" Value="MailALM.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/quackez-dev/mailalm" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="MailALM">
+        <Component Id="MailALMExe" Guid="F4F3DA82-E25B-4E7F-AEBE-3B483CDDD8A9">
+          <File Id="MailALMExeFile" Source="$(var.BinDir)\mailalm.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="MailALMMcpExe" Guid="0F7C530B-A4EE-426E-B88E-30A23B62202E">
+          <File Id="MailALMMcpExeFile" Source="$(var.BinDir)\mailalm-mcp.exe" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="24883CBB-D141-44D9-85EC-68D5B0607827">
+        <Shortcut
+          Id="MailALMShortcut"
+          Name="MailALM"
+          Description="Mail and calendar"
+          Target="[INSTALLFOLDER]mailalm.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="MailALM.ico" />
+        <RegistryValue Root="HKMU" Key="Software\quackez-dev\MailALM" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="MailALM" Title="MailALM">
+      <ComponentRef Id="MailALMExe" />
+      <ComponentRef Id="MailALMMcpExe" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>
