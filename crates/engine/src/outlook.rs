@@ -8,7 +8,7 @@
 //! A folder is synced with Graph's delta query: the first pass lists every message, later passes
 //! only what changed since, from the delta link kept in the folder's state.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
@@ -20,6 +20,7 @@ use mailalm_net::graph::{DeltaNext, GraphClient};
 use mailalm_net::oauth::{self, Provider, Tokens};
 use mailalm_store::{FolderState, Store};
 
+use crate::ids::Ids;
 use crate::local::{self, sort_newest_first};
 use crate::{Command, Event, Link, Wake, secrets};
 
@@ -102,48 +103,8 @@ struct Outlook {
 }
 
 /// An error as the user reads it. Never holds a token: the network layer never puts one in.
-fn describe(e: &NetError) -> String {
+pub(crate) fn describe(e: &NetError) -> String {
     if e.is_auth() { format!("Microsoft refused the sign-in: {e}") } else { e.to_string() }
-}
-
-/// A folder's numbers and ids, both ways.
-struct Ids {
-    by_uid: HashMap<u32, String>,
-    by_id: HashMap<String, u32>,
-    next: u32,
-}
-
-impl Ids {
-    fn load(store: &Store, path: &str, next: u32) -> Self {
-        let pairs = store.ids(path);
-        let next = pairs.iter().map(|(u, _)| u.saturating_add(1)).max().unwrap_or(1).max(next).max(1);
-        let by_id = pairs.iter().map(|(u, i)| (i.clone(), *u)).collect();
-        Self { by_uid: pairs.into_iter().collect(), by_id, next }
-    }
-
-    /// The message's number, given now if it has none.
-    fn number(&mut self, id: &str) -> u32 {
-        if let Some(u) = self.by_id.get(id) {
-            return *u;
-        }
-        let u = self.next;
-        self.next = self.next.saturating_add(1);
-        self.by_uid.insert(u, id.to_owned());
-        self.by_id.insert(id.to_owned(), u);
-        u
-    }
-
-    fn forget(&mut self, uid: u32) {
-        if let Some(id) = self.by_uid.remove(&uid) {
-            self.by_id.remove(&id);
-        }
-    }
-
-    fn pairs(&self) -> Vec<(u32, String)> {
-        let mut v: Vec<(u32, String)> = self.by_uid.iter().map(|(u, i)| (*u, i.clone())).collect();
-        v.sort_unstable_by_key(|p| p.0);
-        v
-    }
 }
 
 impl Outlook {
@@ -201,6 +162,7 @@ impl Outlook {
                 self.tokens = None;
                 self.sync_all(commands);
             }
+            Command::Senders(_) => self.error("Microsoft's API cannot change Outlook.com's blocked senders: block a sender in Outlook.com's settings (Mail, Junk email)."),
             Command::Stop => self.stop = true,
         }
     }
@@ -702,7 +664,8 @@ impl Outlook {
     // ---- Sending ----
 
     fn send_message(&mut self, message: Outgoing, commands: &Receiver<Command>) {
-        let (raw, _id) = match mailalm_mime::build(&message) {
+        // Graph takes the recipients from the headers: Bcc is written (and removed by Graph).
+        let (raw, _id) = match mailalm_mime::build_for_api(&message) {
             Ok(r) => r,
             Err(e) => {
                 self.emit(Event::SendFailed { account: self.id, text: e, message: Box::new(message) });
@@ -730,36 +693,4 @@ enum Refresh {
     Refused(String),
     /// No network, or Microsoft busy: tried again later.
     Offline(String),
-}
-
-/// What a browser sign-in to Microsoft gives: who signed in, and what to keep in the keychain.
-pub struct MicrosoftAccount {
-    pub address: String,
-    pub name: String,
-    pub refresh_token: String,
-}
-
-impl std::fmt::Debug for MicrosoftAccount {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MicrosoftAccount").field("address", &self.address).field("name", &self.name).finish_non_exhaustive()
-    }
-}
-
-/// Whether this build can sign in to Microsoft (its client id was set when it was built).
-pub fn microsoft_available() -> bool {
-    oauth::microsoft().is_some()
-}
-
-/// Signs in to Microsoft in the browser (`open` shows the page), then asks Graph who signed in.
-/// Blocking, up to five minutes: run it on a thread.
-pub fn microsoft_sign_in(login_hint: &str, open: &mut dyn FnMut(&str) -> Result<(), String>) -> Result<MicrosoftAccount, String> {
-    let provider = oauth::microsoft().ok_or("This copy of MailALM was built without Microsoft sign-in.")?;
-    let tokens = oauth::authorize(&provider, login_hint, open, Duration::from_secs(5 * 60)).map_err(|e| describe(&e))?;
-    let refresh_token = tokens.refresh.clone().ok_or("Microsoft did not allow MailALM to stay signed in (no refresh token).")?;
-    let me = GraphClient::new(&tokens.access).me().map_err(|e| format!("Signed in, but the mailbox could not be read: {}", describe(&e)))?;
-    let address = if me.address.trim().is_empty() { tokens.user.clone().unwrap_or_default() } else { me.address };
-    if address.trim().is_empty() {
-        return Err("Microsoft did not say which account signed in.".to_owned());
-    }
-    Ok(MicrosoftAccount { address: address.trim().to_owned(), name: me.name, refresh_token })
 }

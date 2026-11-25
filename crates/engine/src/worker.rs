@@ -165,6 +165,7 @@ impl Worker {
                 self.drop_session();
                 self.sync_all(commands);
             }
+            Command::Senders(_) => self.error("Blocking a sender on an IMAP account arrives with the rules (phase 8)."),
             Command::Stop => self.stop = true,
         }
     }

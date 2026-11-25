@@ -36,7 +36,23 @@ mise à jour automatique, pas de rapport de plantage, pas d'autoconfiguration pa
 - MailALM ne suit aucune redirection HTTP, et ne suit un lien de pagination de Graph que s'il pointe vers
   `https://graph.microsoft.com/`.
 
+## Phase 4 : comptes Gmail
+
+| Domaine | Port | Protocole | Quand |
+|---|---|---|---|
+| `accounts.google.com` | 443 (TLS) | HTTPS | Page de connexion de Google, ouverte dans le **navigateur** (MailALM ne la contacte pas lui-même) |
+| `oauth2.googleapis.com` | 443 (TLS) | HTTPS (OAuth 2, PKCE) | Échange du code contre les jetons, puis renouvellement du jeton d'accès (environ toutes les heures) |
+| `gmail.googleapis.com` | 443 (TLS) | HTTPS (API Gmail v1) | Compte Gmail : libellés, messages, changements, envoi, filtres (expéditeurs bloqués ou autorisés) |
+| `127.0.0.1` (ce PC) | port libre choisi au moment de la connexion | HTTP | Le navigateur y renvoie le code de connexion ; MailALM n'écoute que sur ce PC, et seulement pendant la connexion |
+
+- Comme pour Microsoft, le mot de passe Google est tapé dans le navigateur, jamais dans MailALM, et seul le jeton
+  de renouvellement est gardé, dans le Gestionnaire d'identifiants de Windows.
+- Permissions demandées : `gmail.modify` et `gmail.settings.basic` (et `openid email profile` pour savoir quel
+  compte s'est connecté). Pas l'accès complet : MailALM ne peut pas effacer un message Gmail pour de bon.
+- L'API Gmail ne donne aucun lien à suivre (la pagination passe par des jetons) : MailALM ne contacte que les
+  adresses ci-dessus.
+
 ## Phases suivantes
 
-Les API Google et la connexion Google (phase 4) : la liste sera complétée à leur arrivée et validée par
-l'utilisateur.
+L'agenda, les tâches et les contacts (phase 6) ajouteront les API Google Agenda, Tasks et People, et l'agenda de
+Graph : la liste sera complétée à leur arrivée.

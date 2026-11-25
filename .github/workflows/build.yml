@@ -8,9 +8,12 @@
 # - Actions: only GitHub's own, pinned by commit SHA. Secrets:
 #   - MIRRORS_TOKEN (read-only on the mirrors), removed before any build script runs;
 #   - MAILALM_MICROSOFT_CLIENT_ID, the public id of MailALM's Microsoft app registration
-#     (docs/oauth-microsoft.md), given to the release build step alone and compiled in. It is not a
-#     credential (it can be read from the binary); it is kept out of the public code (PLAN.md, Q5).
-#   No pull_request trigger: a run from someone else's code never sees either.
+#     (docs/oauth-microsoft.md), and MAILALM_GOOGLE_CLIENT_ID and MAILALM_GOOGLE_CLIENT_SECRET, its
+#     Google desktop client (docs/oauth-google.md), given to the release build step alone and
+#     compiled in. They are not credentials (they can be read from the binary; Google does not
+#     treat a desktop client's secret as confidential); they are kept out of the public code
+#     (PLAN.md, Q5).
+#   No pull_request trigger: a run from someone else's code never sees any of them.
 # - Tests and build run offline.
 # - Windows only for now (PLAN.md, decision Q2).
 # - A push to main runs the tests and the release build. A `crafttools-v*` tag or a manual run also
@@ -85,8 +88,11 @@ jobs:
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
           MAILALM_MICROSOFT_CLIENT_ID: ${{ secrets.MAILALM_MICROSOFT_CLIENT_ID }}
+          MAILALM_GOOGLE_CLIENT_ID: ${{ secrets.MAILALM_GOOGLE_CLIENT_ID }}
+          MAILALM_GOOGLE_CLIENT_SECRET: ${{ secrets.MAILALM_GOOGLE_CLIENT_SECRET }}
         run: |
           if [ -z "$MAILALM_MICROSOFT_CLIENT_ID" ]; then echo "::warning::MAILALM_MICROSOFT_CLIENT_ID is not set: this build cannot sign in to Microsoft"; fi
+          if [ -z "$MAILALM_GOOGLE_CLIENT_ID" ] || [ -z "$MAILALM_GOOGLE_CLIENT_SECRET" ]; then echo "::warning::the Google client id or secret is not set: this build cannot sign in to Google"; fi
           cargo build --release --locked --offline -p mailalm --target x86_64-pc-windows-msvc
 
       - name: Package (portable zip, unsigned)

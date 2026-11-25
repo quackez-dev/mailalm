@@ -1,17 +1,21 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/oauth.rs. MIT OR Apache-2.0.
-// Changed: Microsoft personal accounts only, for Graph; the client id is baked in at build time only (no run-time override), no client secret, no Google, no XOAUTH2; the redirect is http://localhost on 127.0.0.1 and ::1; tokens checked before use; codes and tokens blanked out of any error.
+// Changed: Microsoft personal accounts (for Graph) and Google (for the Gmail API) only; the client id, and Google's client secret, are baked in at build time only (no run-time override); no XOAUTH2; the redirect is http://localhost on 127.0.0.1 and ::1 for Microsoft, http://127.0.0.1 for Google; tokens checked before use; codes, tokens and the client secret blanked out of any error.
 
-//! Signing in to a Microsoft personal account (Outlook.com, Hotmail, Live) with OAuth 2.0, for
-//! Microsoft Graph.
+//! Signing in with OAuth 2.0: to a Microsoft personal account (Outlook.com, Hotmail, Live), for
+//! Microsoft Graph, and to a Google account, for the Gmail API.
 //!
-//! The authorization-code flow for native apps (RFC 8252): the system browser opens Microsoft's
-//! sign-in page, which sends the browser back to a one-shot listener on this computer
-//! (`http://localhost:{port}`); the code it carries is exchanged for tokens with PKCE (RFC 7636),
-//! so a code caught on the way is useless to anyone else. The refresh token is what the keychain
-//! keeps; access tokens are fetched from it as needed and never stored.
+//! The authorization-code flow for native apps (RFC 8252): the system browser opens the
+//! provider's sign-in page, which sends the browser back to a one-shot listener on this computer
+//! (`http://localhost:{port}` for Microsoft, `http://127.0.0.1:{port}` for Google); the code it
+//! carries is exchanged for tokens with PKCE (RFC 7636), so a code caught on the way is useless to
+//! anyone else. The refresh token is what the keychain keeps; access tokens are fetched from it as
+//! needed and never stored.
 //!
-//! Microsoft issues tokens only to registered apps: the registration's client id is baked into
-//! the build (`MAILALM_MICROSOFT_CLIENT_ID`). Without one, Microsoft sign-in isn't offered.
+//! Providers issue tokens only to registered apps: the registration's client id is baked into
+//! the build (`MAILALM_MICROSOFT_CLIENT_ID`; `MAILALM_GOOGLE_CLIENT_ID` and
+//! `MAILALM_GOOGLE_CLIENT_SECRET`). Without them, that provider's sign-in isn't offered. Google
+//! asks desktop apps for their client secret too, though it can't stay secret in a program anyone
+//! can take apart; it is still kept out of every error and `Debug`.
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
@@ -28,12 +32,18 @@ use crate::{NetError, Result, clip};
 pub const MICROSOFT_SCOPE: &str = "https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.ReadWrite \
 https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/MailboxSettings.ReadWrite offline_access";
 
-/// What the browser sign-in asks for besides [`MICROSOFT_SCOPE`]: who signed in (an ID token).
+/// What MailALM asks Google for: reading, changing and sending mail, short of deleting it for
+/// good (`gmail.modify`), and the mailbox's basic settings, its filters (`gmail.settings.basic`).
+/// Google's consent screen lets the user untick either: see [`Tokens::granted`].
+pub const GOOGLE_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic";
+
+/// What the browser sign-in asks for besides the provider's scope: who signed in (an ID token).
 /// Refreshing asks for the mail permissions alone.
 const IDENTITY_SCOPE: &str = "openid email profile";
 
-/// An OAuth provider's endpoints and the app's registration with it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// An OAuth provider's endpoints and the app's registration with it. Its `Debug` doesn't show the
+/// client secret.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Provider {
     pub name: String,
     pub auth_url: String,
@@ -41,6 +51,31 @@ pub struct Provider {
     /// The permissions asked for, separated by spaces.
     pub scope: String,
     pub client_id: String,
+    /// Sent with both token requests when there is one (Google's desktop apps have one).
+    pub client_secret: Option<String>,
+    /// The redirect's host: `localhost` (the listener on 127.0.0.1 and ::1), or `127.0.0.1` (on
+    /// IPv4 alone), as the provider takes it.
+    pub redirect_host: &'static str,
+    /// Query parameters added to the sign-in page's address, each starting with `&`.
+    pub extra_auth: &'static str,
+    /// Whether the token requests name the scope (Microsoft's do; Google takes it from the grant).
+    pub refresh_scope: bool,
+}
+
+impl std::fmt::Debug for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Provider")
+            .field("name", &self.name)
+            .field("auth_url", &self.auth_url)
+            .field("token_url", &self.token_url)
+            .field("scope", &self.scope)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &self.client_secret.as_ref().map(|_| "<redacted>"))
+            .field("redirect_host", &self.redirect_host)
+            .field("extra_auth", &self.extra_auth)
+            .field("refresh_scope", &self.refresh_scope)
+            .finish()
+    }
 }
 
 /// Microsoft (personal accounts only, as the app is registered), when this build has a client
@@ -58,6 +93,35 @@ fn microsoft_with(client_id: Option<&str>) -> Option<Provider> {
         token_url: "https://login.microsoftonline.com/consumers/oauth2/v2.0/token".into(),
         scope: MICROSOFT_SCOPE.into(),
         client_id: client_id.into(),
+        client_secret: None,
+        redirect_host: "localhost",
+        extra_auth: "&response_mode=query",
+        refresh_scope: true,
+    })
+}
+
+/// Google, when this build has both a client id and a client secret: `MAILALM_GOOGLE_CLIENT_ID`
+/// and `MAILALM_GOOGLE_CLIENT_SECRET` at build time, trimmed, not empty. No run-time override.
+pub fn google() -> Option<Provider> {
+    google_with(option_env!("MAILALM_GOOGLE_CLIENT_ID"), option_env!("MAILALM_GOOGLE_CLIENT_SECRET"))
+}
+
+fn google_with(client_id: Option<&str>, client_secret: Option<&str>) -> Option<Provider> {
+    let client_id = client_id.map(str::trim).filter(|id| !id.is_empty())?;
+    let client_secret = client_secret.map(str::trim).filter(|s| !s.is_empty())?;
+    Some(Provider {
+        name: "Google".into(),
+        auth_url: "https://accounts.google.com/o/oauth2/v2/auth".into(),
+        token_url: "https://oauth2.googleapis.com/token".into(),
+        scope: GOOGLE_SCOPE.into(),
+        client_id: client_id.into(),
+        client_secret: Some(client_secret.into()),
+        // Google's guide for desktop apps names the loopback address rather than `localhost`.
+        redirect_host: "127.0.0.1",
+        // A refresh token (`offline`), given again at every sign-in (`consent`): without
+        // `consent`, a second sign-in to the same account gets none.
+        extra_auth: "&access_type=offline&prompt=consent",
+        refresh_scope: false,
     })
 }
 
@@ -72,6 +136,8 @@ pub struct Tokens {
     /// Who signed in, from the ID token (its `email`, else `preferred_username`): only after a
     /// browser sign-in, which asks for it.
     pub user: Option<String>,
+    /// The permissions granted, separated by spaces, when the answer named them (its `scope`).
+    pub scope: Option<String>,
 }
 
 impl std::fmt::Debug for Tokens {
@@ -84,6 +150,15 @@ impl Tokens {
     /// Whether the access token has run out (or is about to: see `expires_at`).
     pub fn expired(&self) -> bool {
         now_unix() >= self.expires_at
+    }
+
+    /// Whether `scope` (one permission) was granted: Google's consent screen lets the user untick
+    /// some. True when the answer didn't say which were granted (all asked for, then).
+    pub fn granted(&self, scope: &str) -> bool {
+        match &self.scope {
+            None => true,
+            Some(granted) => granted.split_whitespace().any(|g| g == scope),
+        }
     }
 }
 
@@ -114,6 +189,8 @@ fn pkce() -> Result<(String, String)> {
 const MAX_ID_TOKEN: usize = 32 << 10;
 /// Longest access or refresh token taken.
 const MAX_TOKEN: usize = 64 << 10;
+/// Most of the granted scope kept (in characters).
+const MAX_SCOPE: usize = 8 << 10;
 
 /// The address in an ID token (a JWT: its middle part is base64url JSON). It came straight from
 /// the provider over TLS, so its signature isn't checked; it's only ever shown, or compared with
@@ -137,13 +214,20 @@ fn token_ok(t: &str) -> bool {
     !t.is_empty() && t.len() <= MAX_TOKEN && t.bytes().all(|b| b.is_ascii_graphic())
 }
 
-/// One request to the token endpoint: `fields`, the client id, and `scope`. Codes, verifiers and
-/// refresh tokens sent are blanked out of any error (a server that echoes what it was sent).
+/// One request to the token endpoint: `fields`, the client id (and secret, if any), and `scope`
+/// when the provider takes it. Codes, verifiers, refresh tokens and the client secret sent are
+/// blanked out of any error (a server that echoes what it was sent).
 fn token_request(p: &Provider, fields: &[(&str, &str)], scope: &str) -> Result<Tokens> {
-    let secrets: Vec<&str> = fields.iter().filter(|(k, _)| matches!(*k, "code" | "code_verifier" | "refresh_token")).map(|(_, v)| *v).collect();
+    let mut secrets: Vec<&str> = fields.iter().filter(|(k, _)| matches!(*k, "code" | "code_verifier" | "refresh_token")).map(|(_, v)| *v).collect();
     let mut pairs: Vec<(&str, &str)> = vec![("client_id", p.client_id.as_str())];
+    if let Some(secret) = p.client_secret.as_deref() {
+        pairs.push(("client_secret", secret));
+        secrets.push(secret);
+    }
     pairs.extend_from_slice(fields);
-    pairs.push(("scope", scope));
+    if p.refresh_scope {
+        pairs.push(("scope", scope));
+    }
     let req = Request::post(&p.token_url, "application/x-www-form-urlencoded", form(&pairs), 1 << 20).header("Accept", "application/json");
     token_answer(p, &req).map_err(|e| e.without(&secrets))
 }
@@ -184,13 +268,14 @@ fn token_answer(p: &Provider, req: &Request) -> Result<Tokens> {
         access: access.to_string(),
         refresh,
         user: v.get("id_token").and_then(Value::as_str).and_then(id_token_user),
+        scope: v.get("scope").and_then(Value::as_str).map(|s| s.chars().take(MAX_SCOPE).collect()),
         // A minute early, so a token never runs out mid-request.
         expires_at: now_unix().saturating_add(i64::try_from(expires - 60).unwrap_or(0)),
     })
 }
 
 /// A fresh access token from a refresh token (and, from Microsoft, a new refresh token: the
-/// caller keeps it in place of the old one).
+/// caller keeps it in place of the old one; Google sends none, the old one goes on).
 pub fn refresh(p: &Provider, refresh_token: &str) -> Result<Tokens> {
     token_request(p, &[("grant_type", "refresh_token"), ("refresh_token", refresh_token)], &p.scope)
 }
@@ -332,24 +417,26 @@ fn authorize_with(
     timeout: Duration,
     line_wait: Duration,
 ) -> Result<Tokens> {
-    // The app is registered with `http://localhost` (Microsoft takes any port for it). A browser
-    // may take `localhost` for 127.0.0.1 or for ::1: both listen, on the same port.
+    // Microsoft's app is registered with `http://localhost` (it takes any port for it). A browser
+    // may take `localhost` for 127.0.0.1 or for ::1: both listen, on the same port. Google's
+    // redirect names 127.0.0.1 itself: IPv4 alone listens.
     let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     let port = v4.local_addr()?.port();
-    let v6 = TcpListener::bind((Ipv6Addr::LOCALHOST, port)).ok();
+    let v6 = if p.redirect_host == "localhost" { TcpListener::bind((Ipv6Addr::LOCALHOST, port)).ok() } else { None };
     let listeners: Vec<TcpListener> = std::iter::once(v4).chain(v6).collect();
     for l in &listeners {
         l.set_nonblocking(true)?;
     }
-    let redirect = format!("http://localhost:{port}");
+    let redirect = format!("http://{}:{port}", p.redirect_host);
     let state = crate::base64::encode_url(&random(16)?);
     let (verifier, challenge) = pkce()?;
     let mut url = format!(
-        "{}?client_id={}&response_type=code&response_mode=query&redirect_uri={}&scope={}&state={state}&code_challenge={challenge}&code_challenge_method=S256",
+        "{}?client_id={}&response_type=code&redirect_uri={}&scope={}&state={state}&code_challenge={challenge}&code_challenge_method=S256{}",
         p.auth_url,
         pct(&p.client_id),
         pct(&redirect),
         pct(&format!("{} {IDENTITY_SCOPE}", p.scope)),
+        p.extra_auth,
     );
     if !login_hint.trim().is_empty() {
         url.push_str(&format!("&login_hint={}", pct(login_hint.trim())));

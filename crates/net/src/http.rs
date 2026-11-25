@@ -1,8 +1,8 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/http.rs. MIT OR Apache-2.0.
 // Changed: https only (plain http to this computer in tests alone); no redirects followed, no event streams, no downloads into files, no "internet only" connections; one kept connection opened again once when the server had closed it, never for a request that may have been acted on; a percent-encoder of our own; interim (1xx) answers skipped.
 
-//! A small blocking HTTP/1.1 client (RFC 9112) for the two web services MailALM talks to:
-//! Microsoft's sign-in service (OAuth) and Microsoft Graph.
+//! A small blocking HTTP/1.1 client (RFC 9112) for the web services MailALM talks to: Microsoft's
+//! and Google's sign-in services (OAuth), Microsoft Graph and the Gmail API.
 //!
 //! Every connection is TLS through the same strict setup as IMAP ([`stream::tls`]); plain
 //! `http://` exists only in tests, to a server on this computer. `Content-Length` and `chunked`

@@ -2160,6 +2160,7 @@ dependencies = [
  "imap-proto",
  "lettre",
  "log",
+ "mailalm-mime",
  "mailalm-model",
  "ring",
  "rustls",

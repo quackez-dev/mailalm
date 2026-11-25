@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use mailalm_engine::{Event, Link};
+use mailalm_engine::{Event, Link, SenderRule};
 use mailalm_mime::Parsed;
 use mailalm_model::{AccountId, Folder, FolderRole, Summary};
 
@@ -15,11 +15,13 @@ pub struct AccountState {
     pub link: Link,
     pub link_detail: String,
     pub activity: Option<String>,
+    /// The senders blocked or allowed on the server (Gmail filters), once listed.
+    pub sender_rules: Option<Vec<SenderRule>>,
 }
 
 impl Default for AccountState {
     fn default() -> Self {
-        Self { folders: Vec::new(), summaries: HashMap::new(), link: Link::Idle, link_detail: String::new(), activity: None }
+        Self { folders: Vec::new(), summaries: HashMap::new(), link: Link::Idle, link_detail: String::new(), activity: None, sender_rules: None }
     }
 }
 
@@ -120,6 +122,10 @@ impl Mailboxes {
             Event::Sent { subject, .. } => Outcome::Notice(format!("Sent: {subject}")),
             Event::SendFailed { text, message, .. } => Outcome::SendFailed { account, text, message },
             Event::SearchResults { id, hits, .. } => Outcome::SearchResults { account, id, hits },
+            Event::SenderRules { rules, .. } => {
+                state.sender_rules = Some(rules);
+                Outcome::None
+            }
         }
     }
 }

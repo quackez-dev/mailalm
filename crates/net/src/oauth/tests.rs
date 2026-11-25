@@ -1,5 +1,5 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/oauth.rs (its tests). MIT OR Apache-2.0.
-// Changed: Microsoft's provider and redirect (http://localhost); tokens and codes checked to stay out of errors; the client id from the build only.
+// Changed: Microsoft's provider and redirect (http://localhost), Google's (http://127.0.0.1, a client secret, no scope in token requests); tokens, codes and the client secret checked to stay out of errors; the client id from the build only.
 
 use super::*;
 use crate::http::tests::serve;
@@ -12,6 +12,10 @@ fn local(token_url: &str) -> Provider {
         token_url: token_url.into(),
         scope: "mail offline_access".into(),
         client_id: "mailalm-test".into(),
+        client_secret: None,
+        redirect_host: "localhost",
+        extra_auth: "&response_mode=query",
+        refresh_scope: true,
     }
 }
 
@@ -242,4 +246,78 @@ fn a_failing_sign_in_service_refuses_nothing() {
         assert!(refused || e.is_fatal(), "dropped and tried again: {status} {body}: {e}");
     }
     assert_eq!(seen.join().unwrap().len(), answers.len());
+}
+
+/// Google's client id and secret both come from the build, trimmed; either missing offers no
+/// Google sign-in. The secret never shows in a `Debug`.
+#[test]
+fn google_needs_a_client_id_and_secret() {
+    assert!(google_with(None, Some("s3cret")).is_none() && google_with(Some("id"), None).is_none());
+    assert!(google_with(Some(" "), Some("s3cret")).is_none() && google_with(Some("id"), Some(" \n")).is_none());
+    let p = google_with(Some(" 123-abc.apps.googleusercontent.example "), Some(" GOCSPX-s3cret\n")).unwrap();
+    assert_eq!((p.client_id.as_str(), p.client_secret.as_deref()), ("123-abc.apps.googleusercontent.example", Some("GOCSPX-s3cret")));
+    assert_eq!((p.auth_url.as_str(), p.token_url.as_str()), ("https://accounts.google.com/o/oauth2/v2/auth", "https://oauth2.googleapis.com/token"));
+    assert_eq!((p.scope.as_str(), p.redirect_host, p.extra_auth, p.refresh_scope), (GOOGLE_SCOPE, "127.0.0.1", "&access_type=offline&prompt=consent", false));
+    let debug = format!("{p:?}");
+    assert!(!debug.contains("s3cret") && debug.contains("<redacted>") && debug.contains("123-abc"), "{debug}");
+    let m = microsoft_with(Some("id")).unwrap();
+    assert!(m.client_secret.is_none() && m.redirect_host == "localhost" && m.refresh_scope);
+    assert!(format!("{m:?}").contains("client_secret: None"));
+}
+
+/// Google's sign-in: the redirect to 127.0.0.1, a refresh token asked for at every sign-in, the
+/// client secret in both token requests (and out of their errors), no scope in them; the scope
+/// granted is read from the answer.
+#[test]
+fn google_sign_in_then_refresh() {
+    let first = r#"{"access_token":"ya29.good","refresh_token":"1//r1","expires_in":3599,"scope":"https://www.googleapis.com/auth/gmail.modify openid","token_type":"Bearer"}"#;
+    let (base, seen) = serve(vec![
+        json("200 OK", first),
+        json("200 OK", r#"{"access_token":"ya29.fresh","expires_in":3599,"token_type":"Bearer"}"#),
+        json("401 Unauthorized", r#"{"error":"invalid_client","error_description":"client GOCSPX-s3cret is not valid"}"#),
+    ]);
+    // Google's own sign-in page is only named, never reached: the "browser" goes straight back.
+    let p = Provider { token_url: format!("{base}/token"), ..google_with(Some("gid"), Some("GOCSPX-s3cret")).unwrap() };
+    let mut opened = String::new();
+    let mut go = browser("code=4%2F0Acode&state={state}");
+    let mut open = |url: &str| {
+        opened = url.to_string();
+        go(url)
+    };
+    let t = authorize(&p, "", &mut open, Duration::from_secs(20)).unwrap();
+    assert_eq!((t.access.as_str(), t.refresh.as_deref()), ("ya29.good", Some("1//r1")));
+    assert!(t.granted("https://www.googleapis.com/auth/gmail.modify") && !t.granted("https://www.googleapis.com/auth/gmail.settings.basic"));
+    let redirect = param(&opened, "redirect_uri");
+    assert!(redirect.starts_with("http://127.0.0.1:") && !redirect.ends_with('/'), "{redirect}");
+    assert!(opened.starts_with("https://accounts.google.com/o/oauth2/v2/auth?client_id=gid&"), "{opened}");
+    assert_eq!((param(&opened, "access_type"), param(&opened, "prompt")), ("offline".to_string(), "consent".to_string()));
+    assert!(!opened.contains("response_mode") && !opened.contains("s3cret") && !opened.contains("login_hint"), "{opened}");
+    assert_eq!(param(&opened, "scope"), format!("{GOOGLE_SCOPE} openid email profile"));
+
+    // Google sends no new refresh token: the old one goes on.
+    let t = refresh(&p, "1//r1").unwrap();
+    assert_eq!((t.access.as_str(), t.refresh.as_deref(), t.scope.as_deref()), ("ya29.fresh", None, None));
+    let e = refresh(&p, "1//r1").unwrap_err();
+    assert!(matches!(&e, NetError::Auth(m) if m.contains("client *** is not valid") && !m.contains("s3cret")), "{e}");
+
+    let seen = seen.join().unwrap();
+    assert_eq!(seen.len(), 3);
+    for field in ["client_id=gid&client_secret=GOCSPX-s3cret&", "grant_type=authorization_code", "code=4%2F0Acode", "code_verifier=", "redirect_uri=http%3A%2F%2F127.0.0.1%3A"] {
+        assert!(seen[0].contains(field), "{field}: {}", seen[0]);
+    }
+    assert!(seen[1].ends_with("client_id=gid&client_secret=GOCSPX-s3cret&grant_type=refresh_token&refresh_token=1%2F%2Fr1"), "{}", seen[1]);
+    // Google takes the scope from the grant: no token request names one.
+    assert!(seen.iter().all(|r| !r.contains("scope=")), "{seen:?}");
+}
+
+/// Which permissions were granted: all of them when the answer doesn't say, else exactly those
+/// it names.
+#[test]
+fn granted_scopes() {
+    let t = |scope: Option<&str>| Tokens { access: "a".into(), refresh: None, expires_at: 0, user: None, scope: scope.map(str::to_string) };
+    assert!(t(None).granted("https://www.googleapis.com/auth/gmail.modify"));
+    let some = t(Some("openid  https://www.googleapis.com/auth/gmail.modify\thttps://www.googleapis.com/auth/userinfo.email"));
+    assert!(some.granted("https://www.googleapis.com/auth/gmail.modify") && some.granted("openid"));
+    assert!(!some.granted("https://www.googleapis.com/auth/gmail.settings.basic") && !some.granted("gmail.modify") && !some.granted(""));
+    assert!(!t(Some("")).granted("openid"));
 }

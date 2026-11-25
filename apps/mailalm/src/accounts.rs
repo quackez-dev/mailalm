@@ -1,11 +1,12 @@
 //! Adding and changing an account (PLAN.md, section 4): the dialog that signs in once before the
 //! account is kept. IMAP accounts (Vidéotron, Bell, other) sign in with a password; Hotmail and
-//! Outlook.com accounts in the browser, on Microsoft's page (phase 3). Gmail comes in phase 4.
+//! Outlook.com accounts in the browser, on Microsoft's page (phase 3); Gmail accounts on Google's
+//! page (phase 4).
 
 use std::sync::mpsc::{self, Receiver};
 
 use egui::{Align, ComboBox, Grid, Id, Layout, Modal, RichText, TextEdit, Ui};
-use mailalm_engine::MicrosoftAccount;
+use mailalm_engine::OAuthAccount;
 use mailalm_model::{Account, AccountId, ImapPreset, Provider, Rgb, Security, Server};
 
 use crate::theme as t;
@@ -53,14 +54,14 @@ pub enum FormResult {
 pub enum Secret {
     /// An IMAP account's password.
     Password(String),
-    /// An Outlook account's Microsoft sign-in (refresh token).
+    /// An Outlook or Gmail account's sign-in in the browser (refresh token).
     RefreshToken(String),
 }
 
 /// What a successful sign-in check gave.
 enum Checked {
     Imap,
-    Microsoft(MicrosoftAccount),
+    OAuth(OAuthAccount),
 }
 
 impl AccountForm {
@@ -121,23 +122,34 @@ impl AccountForm {
         }
     }
 
-    /// A Hotmail or Outlook.com account: it signs in on Microsoft's page, not with a password.
-    fn is_outlook(&self) -> bool {
+    /// An account that signs in on its provider's page, not with a password: Hotmail and
+    /// Outlook.com (Microsoft), Gmail (Google).
+    fn browser_provider(&self) -> Option<Provider> {
         match &self.editing {
-            Some(a) => a.provider == Provider::Outlook,
-            None => OUTLOOK_DOMAINS.contains(&domain(&self.address).as_str()),
+            Some(a) => matches!(a.provider, Provider::Outlook | Provider::Gmail).then_some(a.provider),
+            None => {
+                let d = domain(&self.address);
+                if OUTLOOK_DOMAINS.contains(&d.as_str()) {
+                    Some(Provider::Outlook)
+                } else if GMAIL_DOMAINS.contains(&d.as_str()) {
+                    Some(Provider::Gmail)
+                } else {
+                    None
+                }
+            }
         }
     }
 
-    /// What the address's domain allows in this phase.
+    /// What this build cannot do for the address.
     fn unsupported(&self) -> Option<&'static str> {
-        let d = domain(&self.address);
-        if self.is_outlook() && !mailalm_engine::microsoft_available() {
-            Some("This copy of MailALM was built without Microsoft sign-in: Hotmail and Outlook.com accounts cannot be added.")
-        } else if GMAIL_DOMAINS.contains(&d.as_str()) {
-            Some("Gmail accounts connect through Google's API (phase 4).")
-        } else {
-            None
+        match self.browser_provider() {
+            Some(Provider::Outlook) if !mailalm_engine::microsoft_available() => {
+                Some("This copy of MailALM was built without Microsoft sign-in: Hotmail and Outlook.com accounts cannot be added.")
+            }
+            Some(Provider::Gmail) if !mailalm_engine::google_available() => {
+                Some("This copy of MailALM was built without Google sign-in: Gmail accounts cannot be added.")
+            }
+            _ => None,
         }
     }
 
@@ -191,7 +203,7 @@ impl AccountForm {
                         return FormResult::Done(account, password);
                     }
                 }
-                Ok(Checked::Microsoft(m)) => match self.outlook_account(&m, new_id, color) {
+                Ok(Checked::OAuth(m)) => match self.browser_account(&m, new_id, color) {
                     Ok(account) => return FormResult::Done(account, Some(Secret::RefreshToken(m.refresh_token))),
                     Err(e) => self.error = Some(e),
                 },
@@ -201,16 +213,20 @@ impl AccountForm {
 
         let mut result = FormResult::Open;
         let busy = self.checking.is_some();
-        let outlook = self.is_outlook();
+        let browser = self.browser_provider();
         let title = if self.editing.is_some() { "Account settings" } else { "Add an account" };
         let modal = Modal::new(Id::unique("mailalm-account-form")).show(ctx, |ui| {
             ui.set_width(520.0);
             ui.heading(title);
             ui.add_space(4.0);
-            let intro = if outlook {
-                "Hotmail or Outlook.com. MailALM opens Microsoft's sign-in page in your browser: the password is typed there, never in MailALM."
-            } else {
-                "Vidéotron, Bell, Hotmail, Outlook.com or any IMAP account. MailALM signs in once to check the settings before keeping them."
+            let intro = match browser {
+                Some(Provider::Outlook) => {
+                    "Hotmail or Outlook.com. MailALM opens Microsoft's sign-in page in your browser: the password is typed there, never in MailALM."
+                }
+                Some(Provider::Gmail) => {
+                    "Gmail. MailALM opens Google's sign-in page in your browser: the password is typed there, never in MailALM. Google warns that it has not verified MailALM: choose Advanced, then Go to MailALM, and tick every permission."
+                }
+                _ => "Vidéotron, Bell, Hotmail, Outlook.com, Gmail or any IMAP account. MailALM signs in once to check the settings before keeping them.",
             };
             ui.label(RichText::new(intro).size(12.0).color(t::MUTED));
             ui.add_space(10.0);
@@ -227,17 +243,21 @@ impl AccountForm {
             ui.horizontal(|ui| {
                 if busy {
                     ui.spinner();
-                    let waiting = if outlook { "Waiting for the sign-in in your browser…" } else { "Signing in…" };
+                    let waiting = if browser.is_some() { "Waiting for the sign-in in your browser…" } else { "Signing in…" };
                     ui.label(RichText::new(waiting).color(t::MUTED));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if outlook {
-                        let label = if self.editing.is_some() { "Sign in again" } else { "Sign in with Microsoft" };
+                    if let Some(provider) = browser {
+                        let label = match (self.editing.is_some(), provider) {
+                            (true, _) => "Sign in again",
+                            (false, Provider::Gmail) => "Sign in with Google",
+                            (false, _) => "Sign in with Microsoft",
+                        };
                         if ui.add_enabled(!busy, egui::Button::new(label)).clicked() {
-                            self.submit_outlook(ctx);
+                            self.submit_browser(ctx, provider);
                         }
                         if self.editing.is_some() && ui.add_enabled(!busy, egui::Button::new("Save")).clicked() {
-                            self.save_outlook(&mut result);
+                            self.save_browser(&mut result);
                         }
                     } else {
                         let label = if self.editing.is_some() { "Save" } else { "Sign in and add" };
@@ -246,20 +266,20 @@ impl AccountForm {
                         }
                     }
                     // A sign-in in the browser can be left: its answer is then ignored.
-                    if ui.add_enabled(!busy || outlook, egui::Button::new("Cancel")).clicked() {
+                    if ui.add_enabled(!busy || browser.is_some(), egui::Button::new("Cancel")).clicked() {
                         result = FormResult::Cancelled;
                     }
                 });
             });
         });
-        if modal.should_close() && (!busy || outlook) && matches!(result, FormResult::Open) {
+        if modal.should_close() && (!busy || browser.is_some()) && matches!(result, FormResult::Open) {
             result = FormResult::Cancelled;
         }
         result
     }
 
     fn fields(&mut self, ui: &mut Ui) {
-        let outlook = self.is_outlook();
+        let browser = self.browser_provider().is_some();
         Grid::new("mailalm-account-fields").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
             ui.label("E-mail address");
             let addr = ui.add_enabled(self.editing.is_none(), TextEdit::singleline(&mut self.address).hint_text("you@videotron.ca").desired_width(320.0));
@@ -267,17 +287,17 @@ impl AccountForm {
                 self.follow_address();
             }
             ui.end_row();
-            if !outlook {
+            if !browser {
                 ui.label("Password");
                 let hint = if self.editing.is_some() { "Unchanged" } else { "" };
                 ui.add(TextEdit::singleline(&mut self.password).password(true).hint_text(hint).desired_width(320.0));
                 ui.end_row();
             }
             ui.label("Name in MailALM");
-            ui.add(TextEdit::singleline(&mut self.name).hint_text("Vidéotron, Bell, Outlook, Work…").desired_width(320.0));
+            ui.add(TextEdit::singleline(&mut self.name).hint_text("Vidéotron, Bell, Outlook, Gmail, Work…").desired_width(320.0));
             ui.end_row();
         });
-        if outlook {
+        if browser {
             return;
         }
         ui.add_space(6.0);
@@ -315,14 +335,15 @@ impl AccountForm {
         }
     }
 
-    /// The Outlook account a Microsoft sign-in gives. Changing an account, the same account must
-    /// have signed in (another one picked on Microsoft's page is refused).
-    fn outlook_account(&self, m: &MicrosoftAccount, new_id: AccountId, color: Rgb) -> Result<Account, String> {
+    /// The account a sign-in in the browser gives. Changing an account, the same account must
+    /// have signed in (another one picked on the provider's page is refused).
+    fn browser_account(&self, m: &OAuthAccount, new_id: AccountId, color: Rgb) -> Result<Account, String> {
         let name = self.name.trim();
+        let who = if m.provider == Provider::Gmail { "Google" } else { "Microsoft" };
         match &self.editing {
             Some(a) => {
-                if !a.address.eq_ignore_ascii_case(&m.address) {
-                    return Err(format!("You signed in to Microsoft as {}, not as {}. Sign in again with {}.", m.address, a.address, a.address));
+                if a.provider != m.provider || !a.address.eq_ignore_ascii_case(&m.address) {
+                    return Err(format!("You signed in to {who} as {}, not as {}. Sign in again with {}.", m.address, a.address, a.address));
                 }
                 let mut a = a.clone();
                 if !name.is_empty() {
@@ -332,9 +353,9 @@ impl AccountForm {
             }
             None => Ok(Account {
                 id: new_id,
-                name: if name.is_empty() { Provider::Outlook.label().to_owned() } else { name.to_owned() },
+                name: if name.is_empty() { m.provider.label().to_owned() } else { name.to_owned() },
                 address: m.address.clone(),
-                provider: Provider::Outlook,
+                provider: m.provider,
                 color,
                 username: String::new(),
                 imap: None,
@@ -343,8 +364,8 @@ impl AccountForm {
         }
     }
 
-    /// Opens Microsoft's sign-in page in the browser and waits for it on a thread.
-    fn submit_outlook(&mut self, ctx: &egui::Context) {
+    /// Opens the provider's sign-in page in the browser and waits for it on a thread.
+    fn submit_browser(&mut self, ctx: &egui::Context, provider: Provider) {
         self.error = None;
         if let Some(why) = self.unsupported() {
             self.error = Some(why.to_owned());
@@ -357,9 +378,14 @@ impl AccountForm {
         }
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
-        let spawned = std::thread::Builder::new().name("mailalm-microsoft-sign-in".to_owned()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("mailalm-browser-sign-in".to_owned()).spawn(move || {
             let mut open = |url: &str| open_in_browser(url);
-            let _ = tx.send(mailalm_engine::microsoft_sign_in(&hint, &mut open).map(Checked::Microsoft));
+            let signed_in = if provider == Provider::Gmail {
+                mailalm_engine::google_sign_in(&hint, &mut open)
+            } else {
+                mailalm_engine::microsoft_sign_in(&hint, &mut open)
+            };
+            let _ = tx.send(signed_in.map(Checked::OAuth));
             ctx.request_repaint();
         });
         if spawned.is_err() {
@@ -369,8 +395,8 @@ impl AccountForm {
         self.checking = Some(rx);
     }
 
-    /// Keeps an Outlook account's new name, without signing in again.
-    fn save_outlook(&mut self, result: &mut FormResult) {
+    /// Keeps an Outlook or Gmail account's new name, without signing in again.
+    fn save_browser(&mut self, result: &mut FormResult) {
         if let Some(a) = &self.editing {
             let mut a = a.clone();
             let name = self.name.trim();

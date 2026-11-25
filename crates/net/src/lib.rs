@@ -1,5 +1,5 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/lib.rs. MIT OR Apache-2.0.
-// Changed: only IMAP, SMTP, Microsoft sign-in, Graph mail and TLS are left; the error type is reduced to what they need, holds text only, and can blank out a secret.
+// Changed: only IMAP, SMTP, Microsoft and Google sign-in, Graph and Gmail mail and TLS are left (the Gmail client is MailALM's own); the error type is reduced to what they need, holds text only, and can blank out a secret.
 
 //! MailALM's network layer, all of it blocking (it runs on a worker thread):
 //!
@@ -7,10 +7,12 @@
 //!   Server input is hostile: line, literal and per-command sizes are capped.
 //! * [`smtp::send`]: message submission through `lettre` (RFC 6409, implicit TLS per RFC 8314, or
 //!   STARTTLS, required).
-//! * [`oauth`]: signing in to a Microsoft personal account in the system browser (OAuth 2.0 for
-//!   native apps, RFC 8252, with PKCE), and refreshing its tokens.
+//! * [`oauth`]: signing in to a Microsoft personal account or a Google account in the system
+//!   browser (OAuth 2.0 for native apps, RFC 8252, with PKCE), and refreshing its tokens.
 //! * [`graph::GraphClient`]: Outlook.com mail through Microsoft Graph over HTTPS: folders, changes
 //!   by delta query, messages as MIME, marks, moves, deletions, junk reports, sending.
+//! * [`gmail::GmailClient`]: Gmail through the Gmail API over HTTPS: labels, message ids by label,
+//!   header fields, messages as MIME, label changes, the bin, sending, block and allow filters.
 //!
 //! Every connection is TLS, checked against Mozilla's roots and the system's, less what Windows
 //! distrusts. There is no exception path: no certificate trusted by hand, no clear text. A password
@@ -19,6 +21,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod base64;
+pub mod gmail;
 pub mod graph;
 mod http;
 mod imap;

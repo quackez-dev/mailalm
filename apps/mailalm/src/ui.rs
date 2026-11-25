@@ -1,6 +1,6 @@
 //! The main window, as the validated mockups draw it: title bar, command bar, folders (accounts
-//! in an accordion), message list, reading pane and status bar. IMAP accounts (phase 2) and Outlook
-//! accounts through Microsoft Graph (phase 3).
+//! in an accordion), message list, reading pane and status bar. IMAP accounts (phase 2), Outlook
+//! accounts through Microsoft Graph (phase 3) and Gmail accounts through the Gmail API (phase 4).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use egui::{
     Align, Align2, Button, Color32, CornerRadius, FontId, Frame, Id, Key, Layout, Margin, Painter, Pos2, Rect, Response, RichText, ScrollArea,
     Sense, Stroke, TextEdit, Ui, Vec2, ViewportCommand, pos2, vec2,
 };
-use mailalm_engine::{Command, Engine, Link};
+use mailalm_engine::{Command, Engine, Link, SenderCommand, SenderRuleKind};
 use mailalm_mime::Outgoing;
 use mailalm_model::{Account, AccountId, Change, Focus, FolderRole, NewMail, Person, Provider, Summary, Workspace, account_color};
 
@@ -98,6 +98,8 @@ pub struct MailApp {
     form: Option<AccountForm>,
     confirm_remove: Option<AccountId>,
     confirm_delete: Option<MessageKey>,
+    /// The account whose blocked and allowed senders are shown in Settings.
+    senders_open: Option<AccountId>,
     composes: Vec<Compose>,
     next_compose: u64,
 }
@@ -134,6 +136,7 @@ impl MailApp {
             form: None,
             confirm_remove: None,
             confirm_delete: None,
+            senders_open: None,
             composes: Vec::new(),
             next_compose: 1,
         }
@@ -443,23 +446,28 @@ impl MailApp {
         }
     }
 
-    /// The Junk menu: 0 report junk, 1 not junk, 2 block sender. Outlook reports the message to
-    /// Outlook.com (Graph `reportMessage`, which also moves it); IMAP moves the message.
+    /// The Junk menu: 0 report junk, 1 not junk, 2 block sender, 3 never block sender. Outlook
+    /// reports the message to Outlook.com (Graph `reportMessage`, which also moves it); Gmail
+    /// reports it as spam (its SPAM label) and blocks or allows senders with Gmail filters; IMAP
+    /// moves the message.
     fn junk_action(&mut self, n: usize) {
         let Some(key) = self.selected.clone() else {
             self.say("Select a message first.");
             return;
         };
-        let outlook = self.account(key.account).is_some_and(|a| a.provider == Provider::Outlook);
-        match (n, outlook) {
-            (0, true) => self.mark_junk(&key, true),
-            (0, false) => self.move_selected(FolderRole::Junk),
-            (1, true) => self.mark_junk(&key, false),
-            (1, false) => self.move_selected(FolderRole::Inbox),
-            (_, true) => self.say(
+        let provider = self.account(key.account).map(|a| a.provider);
+        let reports = matches!(provider, Some(Provider::Outlook | Provider::Gmail));
+        match (n, provider) {
+            (0, _) if reports => self.mark_junk(&key, true),
+            (0, _) => self.move_selected(FolderRole::Junk),
+            (1, _) if reports => self.mark_junk(&key, false),
+            (1, _) => self.move_selected(FolderRole::Inbox),
+            (2, Some(Provider::Gmail)) => self.set_sender(&key, true),
+            (3, Some(Provider::Gmail)) => self.set_sender(&key, false),
+            (_, Some(Provider::Outlook)) => self.say(
                 "Microsoft's API cannot change Outlook.com's blocked senders: block this sender in Outlook.com's settings (Mail, Junk email). MailALM's own blocking arrives with the rules (phase 8).",
             ),
-            (_, false) => self.say("Blocking a sender on an IMAP account arrives with the rules (phase 8)."),
+            (_, _) => self.say("Blocking a sender on an IMAP account arrives with the rules (phase 8)."),
         }
     }
 
@@ -469,14 +477,50 @@ impl MailApp {
             self.say("Only a message in Junk can be marked as not junk.");
             return;
         }
+        if junk && in_folder == Some(FolderRole::Junk) {
+            self.say("The message is already in Junk.");
+            return;
+        }
+        let gmail = self.account(key.account).is_some_and(|a| a.provider == Provider::Gmail);
         self.select_after_removal(key);
         self.engine.send(key.account, Command::Apply(Change::MarkJunk { folder: key.folder.clone(), uids: vec![key.uid], junk }));
         self.drop_hit(key);
-        self.say(if junk {
-            "Reported to Outlook.com as junk, and moved to Junk."
-        } else {
-            "Reported to Outlook.com as not junk, and moved back to the Inbox."
+        self.say(match (gmail, junk) {
+            (true, true) => "Reported to Gmail as spam, and moved to Spam.",
+            (true, false) => "Reported to Gmail as not spam, and moved back to the Inbox.",
+            (false, true) => "Reported to Outlook.com as junk, and moved to Junk.",
+            (false, false) => "Reported to Outlook.com as not junk, and moved back to the Inbox.",
         });
+    }
+
+    /// Gmail: blocks the sender of the message (a filter to Spam, and the message reported as
+    /// spam), or makes sure its messages never go to Spam (a filter too).
+    fn set_sender(&mut self, key: &MessageKey, block: bool) {
+        let from = self
+            .boxes
+            .account(key.account)
+            .and_then(|s| s.summaries.get(&key.folder))
+            .and_then(|v| v.iter().find(|s| s.uid == key.uid))
+            .map(|s| s.from.address.trim().to_owned())
+            .filter(|a| mailalm_mime::address_is_valid(a));
+        let Some(from) = from else {
+            self.say("This message has no sender address.");
+            return;
+        };
+        let in_junk = self.boxes.account(key.account).and_then(|s| s.folder(&key.folder)).is_some_and(|f| f.role == FolderRole::Junk);
+        if block {
+            self.engine.send(key.account, Command::Senders(SenderCommand::Block(from.clone())));
+            if !in_junk {
+                self.mark_junk(key, true);
+            }
+            self.say(format!("{from} is blocked: a Gmail filter sends its messages to Spam. Settings lists the blocked senders."));
+        } else {
+            self.engine.send(key.account, Command::Senders(SenderCommand::Allow(from.clone())));
+            if in_junk {
+                self.mark_junk(key, false);
+            }
+            self.say(format!("Gmail will never send {from}'s messages to Spam (a Gmail filter). Settings lists the allowed senders."));
+        }
     }
 
     fn move_to(&mut self, key: &MessageKey, to: String) {
@@ -498,6 +542,11 @@ impl MailApp {
         };
         let state = self.boxes.account(key.account);
         let in_trash = state.and_then(|s| s.folder(&key.folder)).is_some_and(|f| f.role == FolderRole::Trash);
+        if in_trash && self.account(key.account).is_some_and(|a| a.provider == Provider::Gmail) {
+            // MailALM asks Google only for gmail.modify, which cannot delete for good.
+            self.say("Gmail empties its Trash by itself after 30 days: MailALM does not delete Gmail messages for good.");
+            return;
+        }
         let trash = state.and_then(|s| s.folder_with_role(FolderRole::Trash)).map(|f| f.path.clone());
         match trash {
             Some(trash) if !in_trash => self.move_to(&key, trash),
@@ -810,7 +859,7 @@ impl MailApp {
                     }
                     let mut junk: Option<usize> = None;
                     let _ = ui.menu_button(("Junk", icons::atom(Icon::ChevronDown)), |ui| {
-                        for (n, item) in ["Report junk", "Not junk", "Block sender"].into_iter().enumerate() {
+                        for (n, item) in ["Report junk", "Not junk", "Block sender", "Never block sender"].into_iter().enumerate() {
                             if ui.button(item).clicked() {
                                 junk = Some(n);
                                 ui.close();
@@ -818,6 +867,7 @@ impl MailApp {
                         }
                         ui.separator();
                         ui.label(RichText::new("Outlook: reported to Outlook.com, which moves the message.").size(11.0).color(t::MUTED));
+                        ui.label(RichText::new("Gmail: reported to Gmail as spam; senders are blocked or allowed by Gmail filters.").size(11.0).color(t::MUTED));
                         ui.label(RichText::new("IMAP: moved to the server's Junk folder.").size(11.0).color(t::MUTED));
                     });
                     if let Some(n) = junk {
@@ -1203,8 +1253,8 @@ impl MailApp {
         if response.clicked() {
             self.focus_account(id);
         }
-        let outlook = self.ws.account(id).is_some_and(|a| a.provider == Provider::Outlook);
-        let fix = if outlook { "Sign-in refused: sign in again…" } else { "Sign-in refused: check the password…" };
+        let browser = self.ws.account(id).is_some_and(|a| matches!(a.provider, Provider::Outlook | Provider::Gmail));
+        let fix = if browser { "Sign-in refused: sign in again…" } else { "Sign-in refused: check the password…" };
         if link == Link::SignInRefused && ui.small_button(fix).clicked() {
             if let Some(a) = self.ws.account(id) {
                 self.form = Some(AccountForm::edit(a));
@@ -1541,8 +1591,7 @@ impl MailApp {
                 ui.add_space(120.0);
                 ui.label(RichText::new("Welcome to MailALM").size(24.0).strong());
                 ui.add_space(8.0);
-                ui.label(RichText::new("Add your Vidéotron, Bell, Hotmail, Outlook.com or other IMAP account to start.").color(t::MUTED));
-                ui.label(RichText::new("Outlook and Gmail arrive in the next phases.").color(t::FAINT));
+                ui.label(RichText::new("Add your Vidéotron, Bell, Hotmail, Outlook.com, Gmail or other IMAP account to start.").color(t::MUTED));
                 ui.add_space(16.0);
                 if ui.add(Button::new(RichText::new("Add an account").strong().color(t::ON_ACCENT)).fill(t::ACCENT)).clicked() {
                     self.form = Some(AccountForm::new());
@@ -1556,6 +1605,8 @@ impl MailApp {
         let mut remove: Option<AccountId> = None;
         let mut add = false;
         let mut back = false;
+        let mut senders: Option<AccountId> = None;
+        let mut sender_command: Option<(AccountId, SenderCommand)> = None;
         egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(28, 20))).show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Back to Mail").clicked() {
@@ -1578,6 +1629,7 @@ impl MailApp {
                             let servers = match (&a.imap, &a.smtp) {
                                 (Some(i), Some(s)) => format!("{} · IMAP {}:{} · SMTP {}:{}", a.address, i.host, i.port, s.host, s.port),
                                 _ if a.provider == Provider::Outlook => format!("{} · Outlook.com (Microsoft Graph)", a.address),
+                                _ if a.provider == Provider::Gmail => format!("{} · Gmail (Gmail API)", a.address),
                                 _ => a.address.clone(),
                             };
                             ui.label(RichText::new(servers).size(12.0).color(t::FAINT));
@@ -1597,8 +1649,43 @@ impl MailApp {
                             if ui.button("Edit…").clicked() {
                                 edit = Some(a.id);
                             }
+                            if a.provider == Provider::Gmail {
+                                let label = if self.senders_open == Some(a.id) { "Hide senders" } else { "Blocked senders…" };
+                                if ui.button(label).clicked() {
+                                    senders = Some(a.id);
+                                }
+                            }
                         });
                     });
+                    if self.senders_open == Some(a.id) {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Gmail filters made by MailALM (a sender's address, to Spam, to the Trash, or never to Spam). Other filters are left alone, in Gmail's settings.").size(11.5).color(t::FAINT));
+                        ui.add_space(4.0);
+                        match state.and_then(|s| s.sender_rules.as_ref()) {
+                            None => {
+                                ui.label(RichText::new("Reading Gmail's filters…").size(12.0).color(t::MUTED));
+                            }
+                            Some(rules) if rules.is_empty() => {
+                                ui.label(RichText::new("No sender is blocked or allowed. Use Junk, Block sender on a message.").size(12.0).color(t::MUTED));
+                            }
+                            Some(rules) => {
+                                for r in rules {
+                                    ui.horizontal(|ui| {
+                                        let what = match r.kind {
+                                            SenderRuleKind::Spam => "blocked: to Spam",
+                                            SenderRuleKind::Trash => "blocked: to the Trash",
+                                            SenderRuleKind::NeverSpam => "allowed: never to Spam",
+                                        };
+                                        ui.label(RichText::new(&r.address).size(12.5));
+                                        ui.label(RichText::new(what).size(12.0).color(t::MUTED));
+                                        if ui.small_button("Remove").clicked() {
+                                            sender_command = Some((a.id, SenderCommand::Remove(r.id.clone())));
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
                 });
                 ui.add_space(6.0);
             }
@@ -1609,10 +1696,21 @@ impl MailApp {
             ui.label(RichText::new("ABOUT").size(11.0).strong().color(t::FAINT));
             ui.add_space(6.0);
             ui.label(RichText::new(format!("MailALM {} · MIT OR Apache-2.0", env!("CARGO_PKG_VERSION"))).color(t::MUTED));
-            ui.label(RichText::new("Passwords and Microsoft sign-ins are kept in the Windows Credential Manager. The mail cache is in your local application data folder.").size(12.0).color(t::FAINT));
+            ui.label(RichText::new("Passwords and Microsoft and Google sign-ins are kept in the Windows Credential Manager. The mail cache is in your local application data folder.").size(12.0).color(t::FAINT));
         });
         if back {
             self.page = Page::Mail;
+        }
+        if let Some(id) = senders {
+            if self.senders_open == Some(id) {
+                self.senders_open = None;
+            } else {
+                self.senders_open = Some(id);
+                self.engine.send(id, Command::Senders(SenderCommand::List));
+            }
+        }
+        if let Some((id, c)) = sender_command {
+            self.engine.send(id, Command::Senders(c));
         }
         if add {
             self.form = Some(AccountForm::new());

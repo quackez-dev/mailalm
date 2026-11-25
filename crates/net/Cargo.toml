@@ -1,6 +1,6 @@
 [package]
 name = "mailalm-net"
-description = "MailALM network layer: blocking IMAP client, SMTP submission, Microsoft sign-in (OAuth 2.0 with PKCE) and Microsoft Graph mail over HTTPS, always over verified TLS (adapted from MailCraft)"
+description = "MailALM network layer: blocking IMAP client, SMTP submission, Microsoft and Google sign-in (OAuth 2.0 with PKCE), Microsoft Graph and Gmail API mail over HTTPS, always over verified TLS (adapted from MailCraft)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 mailalm-model = { workspace = true }
+# Gmail's header fields (address lists, encoded words, dates) read as the IMAP sync reads them.
+mailalm-mime = { workspace = true }
 # IMAP responses are parsed by imap-proto; framing and size caps are ours (src/imap/conn.rs).
 imap-proto = { workspace = true }
 # SMTP submission.

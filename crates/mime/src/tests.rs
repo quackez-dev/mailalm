@@ -152,6 +152,11 @@ fn an_outgoing_message_round_trips_without_bcc_or_host_name() {
     assert!(back.text.contains("À demain."));
     assert_eq!(back.references.len(), 2);
     assert_eq!(out.recipients(), vec!["zoe@studio.example".to_owned(), "secret@example.com".to_owned()]);
+
+    // For an API (Graph, Gmail), which takes the recipients from the headers: Bcc is written.
+    let (raw, _) = build_for_api(&out).expect("built");
+    let text = String::from_utf8_lossy(&raw);
+    assert!(text.lines().any(|l| l.starts_with("Bcc:") && l.contains("secret@example.com")), "{text}");
 }
 
 #[test]

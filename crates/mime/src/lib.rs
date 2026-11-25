@@ -273,9 +273,20 @@ impl Outgoing {
     }
 }
 
-/// Writes the message (RFC 5322, plain text). The Bcc header is not written: Bcc recipients are
-/// only in the envelope. Returns the message and its Message-ID.
+/// Writes the message (RFC 5322, plain text) for SMTP. The Bcc header is not written: Bcc
+/// recipients are only in the envelope. Returns the message and its Message-ID.
 pub fn build(out: &Outgoing) -> Result<(Vec<u8>, String), String> {
+    write(out, false)
+}
+
+/// Writes the message for a provider's API (Microsoft Graph `sendMail`, Gmail `messages.send`),
+/// which has no envelope: it takes the recipients from the To, Cc and Bcc headers, and removes
+/// the Bcc header from what it delivers. Without it, Bcc recipients would get nothing.
+pub fn build_for_api(out: &Outgoing) -> Result<(Vec<u8>, String), String> {
+    write(out, true)
+}
+
+fn write(out: &Outgoing, with_bcc: bool) -> Result<(Vec<u8>, String), String> {
     if out.to.is_empty() && out.cc.is_empty() && out.bcc.is_empty() {
         return Err("The message has no recipient.".to_owned());
     }
@@ -295,6 +306,9 @@ pub fn build(out: &Outgoing) -> Result<(Vec<u8>, String), String> {
     }
     if !out.cc.is_empty() {
         b = b.cc(out.cc.iter().map(addr).collect::<Vec<_>>());
+    }
+    if with_bcc && !out.bcc.is_empty() {
+        b = b.bcc(out.bcc.iter().map(addr).collect::<Vec<_>>());
     }
     if let Some(r) = &out.in_reply_to {
         b = b.in_reply_to(r.clone());

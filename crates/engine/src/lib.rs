@@ -1,6 +1,6 @@
 //! The engine between the interface and the servers.
 //!
-//! Each account has its own worker thread (IMAP, or Outlook through Microsoft Graph), its own cache ([`mailalm_store::Store`]) and its own
+//! Each account has its own worker thread (IMAP, Outlook through Microsoft Graph, Gmail through its API), its own cache ([`mailalm_store::Store`]) and its own
 //! connection: one slow or failing account never holds up another (PLAN.md, section 4.3). The
 //! interface sends [`Command`]s and reads [`Event`]s; it never waits on the network.
 //!
@@ -17,12 +17,15 @@ use std::thread::JoinHandle;
 use mailalm_mime::{Outgoing, Parsed};
 use mailalm_model::{Account, AccountId, Change, Folder, Provider, Summary};
 
+mod gmail;
+mod ids;
 mod local;
 mod outlook;
 pub mod secrets;
+mod signin;
 mod worker;
 
-pub use outlook::{MicrosoftAccount, microsoft_available, microsoft_sign_in};
+pub use signin::{OAuthAccount, google_available, google_sign_in, microsoft_available, microsoft_sign_in};
 
 /// What the interface asks of an account's worker.
 #[derive(Debug)]
@@ -41,7 +44,43 @@ pub enum Command {
     Search { id: u64, query: String },
     /// Signs in again (the password was changed).
     Reconnect,
+    /// The account's blocked and allowed senders, kept on the server (Gmail filters). Other
+    /// accounts answer with an error.
+    Senders(SenderCommand),
     Stop,
+}
+
+/// What is asked about the senders an account blocks or allows on its server.
+#[derive(Debug)]
+pub enum SenderCommand {
+    /// Lists them: the answer is [`Event::SenderRules`].
+    List,
+    /// Blocks this address: its messages go to Spam (or, if Gmail refuses that, to the Trash).
+    Block(String),
+    /// Never sends this address to Spam.
+    Allow(String),
+    /// Removes the rule with this id.
+    Remove(String),
+}
+
+/// What a rule on the server does with a sender's messages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SenderRuleKind {
+    /// Sent to Spam.
+    Spam,
+    /// Sent to the Trash (Gmail refused Spam as a filter's action).
+    Trash,
+    /// Never sent to Spam.
+    NeverSpam,
+}
+
+/// One rule on the server about a sender, made by MailALM (or of the same shape).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SenderRule {
+    /// The server's id for it, to remove it.
+    pub id: String,
+    pub address: String,
+    pub kind: SenderRuleKind,
 }
 
 /// How the account's connection is.
@@ -75,6 +114,8 @@ pub enum Event {
     /// The message was not sent: it comes back so nothing typed is lost.
     SendFailed { account: AccountId, text: String, message: Box<Outgoing> },
     SearchResults { account: AccountId, id: u64, hits: Vec<(String, Summary)> },
+    /// The senders the account blocks or allows on its server, after [`SenderCommand`]s.
+    SenderRules { account: AccountId, rules: Vec<SenderRule> },
 }
 
 impl Event {
@@ -89,7 +130,8 @@ impl Event {
             | Event::Error { account, .. }
             | Event::Sent { account, .. }
             | Event::SendFailed { account, .. }
-            | Event::SearchResults { account, .. } => *account,
+            | Event::SearchResults { account, .. }
+            | Event::SenderRules { account, .. } => *account,
         }
     }
 }
@@ -118,14 +160,9 @@ impl Engine {
         Self { base, events_tx, events, wake, workers: HashMap::new() }
     }
 
-    /// Starts an account's worker: IMAP, or Outlook (Microsoft Graph). Gmail comes in phase 4.
+    /// Starts an account's worker: IMAP, Outlook (Microsoft Graph) or Gmail (its API).
     pub fn start(&mut self, account: Account) {
         self.stop(account.id);
-        if account.provider == Provider::Gmail {
-            let _ = self.events_tx.send(Event::Error { account: account.id, text: "Gmail accounts arrive in phase 4.".to_owned() });
-            (self.wake)();
-            return;
-        }
         let (tx, rx) = mpsc::channel();
         let events = self.events_tx.clone();
         let wake = Arc::clone(&self.wake);
@@ -136,6 +173,7 @@ impl Engine {
             .name(format!("mailalm-account-{}", id.0))
             .spawn(move || match provider {
                 Provider::Outlook => outlook::run(account, base, rx, events, wake),
+                Provider::Gmail => gmail::run(account, base, rx, events, wake),
                 _ => worker::run(account, base, rx, events, wake),
             })
             .ok();

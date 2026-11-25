@@ -3,11 +3,12 @@
 A mail and calendar client for Windows, written in Rust with egui: Outlook.com/Hotmail, Gmail and
 classic IMAP accounts side by side, each kept clearly apart.
 
-**Status: phase 3.** IMAP accounts (Vidéotron, Bell and others) and Hotmail/Outlook.com accounts
-(Microsoft Graph, signed in on Microsoft's page in the browser): reading, sending in plain text,
-folders, moving, flags, a local cache, search in the cache, and changes made while offline. Outlook
-accounts report junk to Outlook.com. Gmail comes in phase 4; attachments can be
-listed but not opened yet (phase 5).
+**Status: phase 4.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
+(Microsoft Graph) and Gmail accounts (Gmail API), the last two signed in on the provider's page in
+the browser: reading, sending in plain text, folders and labels, moving, flags, a local cache,
+search in the cache, and changes made while offline. Outlook accounts report junk to Outlook.com;
+Gmail accounts report spam to Gmail and block or allow senders with Gmail filters. Attachments can
+be listed but not opened yet (phase 5).
 
 ## Principles
 
