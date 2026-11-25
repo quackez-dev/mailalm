@@ -1,13 +1,16 @@
 //! MailALM desktop app.
 //!
-//! Phase 2: IMAP accounts (Vidéotron, Bell, others): reading, sending, folders, the local cache,
-//! search in the cache, and changes made offline.
+//! IMAP, Outlook (Graph) and Gmail accounts: reading, sending, folders, the local cache, search in
+//! the cache, changes made offline, and attachments (reviewed one by one before anything is done
+//! with them; attached to messages sent).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod accounts;
+mod attachments;
 mod compose;
 mod icons;
 mod mailbox;
+mod preview;
 mod settings;
 mod theme;
 mod time;

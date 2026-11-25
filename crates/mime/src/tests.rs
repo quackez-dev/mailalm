@@ -139,6 +139,7 @@ fn an_outgoing_message_round_trips_without_bcc_or_host_name() {
         text: "Bonjour,\nÀ demain.".into(),
         in_reply_to: Some("abc123@studio.example".into()),
         references: vec!["root@studio.example".into(), "abc123@studio.example".into()],
+        attachments: vec![],
     };
     let (raw, id) = build(&out).expect("built");
     assert!(id.ends_with("@videotron.ca"));
@@ -157,6 +158,94 @@ fn an_outgoing_message_round_trips_without_bcc_or_host_name() {
     let (raw, _) = build_for_api(&out).expect("built");
     let text = String::from_utf8_lossy(&raw);
     assert!(text.lines().any(|l| l.starts_with("Bcc:") && l.contains("secret@example.com")), "{text}");
+}
+
+#[test]
+fn attachments_are_sent_and_read_back() {
+    let pdf = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\nbinary \x00\x01\x02 content\n".to_vec();
+    let out = Outgoing {
+        from: Person { name: "Alex".into(), address: "alex@videotron.ca".into() },
+        to: vec![Person { name: String::new(), address: "zoe@studio.example".into() }],
+        subject: "Plans".into(),
+        text: "Here are the plans.".into(),
+        attachments: vec![
+            OutgoingAttachment::new("C:\\Users\\alex\\Plans, révision 2.pdf", pdf.clone()),
+            OutgoingAttachment::new("notes.txt", b"line one\r\nline two\r\n".to_vec()),
+        ],
+        ..Outgoing::default()
+    };
+    assert_eq!(out.attachments[0].name, "Plans, révision 2.pdf", "no folder");
+    assert_eq!(out.attachments[0].content_type, "application/pdf");
+    assert_eq!(out.attachments_size(), pdf.len() + 20);
+    let (raw, _) = build(&out).expect("built");
+    assert!(raw.len() <= out.estimated_size(), "{} > {}", raw.len(), out.estimated_size());
+    let text = String::from_utf8_lossy(&raw);
+    assert!(text.to_ascii_lowercase().contains("multipart/mixed"), "{text}");
+
+    let back = parse(&raw).expect("parses back");
+    assert!(back.text.contains("Here are the plans."));
+    assert_eq!(back.attachments.len(), 2);
+    assert_eq!(back.attachments[0].name, "Plans, révision 2.pdf");
+    assert_eq!(back.attachments[0].declared_type, "application/pdf");
+    assert_eq!(back.attachments[0].size, pdf.len());
+    assert_eq!(back.attachments[1].name, "notes.txt");
+
+    let first = attachment(&raw, 0).expect("decoded");
+    assert_eq!(first.bytes, pdf);
+    assert_eq!(first.raw_name, "Plans, révision 2.pdf");
+    assert_eq!(first.info, back.attachments[0]);
+    assert_eq!(attachment(&raw, 1).expect("decoded").bytes, b"line one\r\nline two\r\n");
+    assert!(attachment(&raw, 2).is_err());
+    assert!(attachment(b"", 0).is_err());
+
+    // The same through an API (Bcc written), still with the attachments.
+    let (raw, _) = build_for_api(&out).expect("built");
+    assert_eq!(parse(&raw).expect("parses back").attachments.len(), 2);
+}
+
+#[test]
+fn an_attachment_keeps_its_announced_name_for_the_checks() {
+    let a = attachment(MIXED.as_bytes(), 0).expect("decoded");
+    assert_eq!(a.bytes, b"%PDF-1.4\n");
+    assert_eq!(a.info.name, "prooffdp.exe");
+    assert!(a.raw_name.contains('\u{202e}'), "the hidden character is still there: {:?}", a.raw_name);
+    assert!(format!("{a:?}").len() < 300, "Debug leaves the content out");
+}
+
+#[test]
+fn the_first_authentication_results_header_is_kept() {
+    let raw = b"Authentication-Results: mx.google.com;\r\n dkim=pass header.i=@example.com;\r\n spf=pass smtp.mailfrom=a@example.com\r\n\
+Authentication-Results: forged.example; dmarc=pass\r\n\
+From: a@example.com\r\nSubject: x\r\n\r\nbody\r\n";
+    let p = parse(raw).expect("a message");
+    let h = p.authentication_results.expect("the header");
+    assert!(h.contains("mx.google.com") && h.contains("dkim=pass"), "{h}");
+    assert!(!h.contains("forged"));
+    assert_eq!(parse(PLAIN).expect("a message").authentication_results, None);
+}
+
+#[test]
+fn a_forgotten_attachment_is_noticed() {
+    assert!(mentions_attachment("Please see the attached file."));
+    assert!(mentions_attachment("I attach the plans"));
+    assert!(mentions_attachment("Voici la pièce jointe."));
+    assert!(mentions_attachment("Ci-joint le contrat."));
+    assert!(mentions_attachment("Le document est joint."));
+    assert!(mentions_attachment("Vous trouverez en PJ les fichiers joints"));
+    assert!(!mentions_attachment("See you tomorrow.\n\n> I attached the file\n> pièce jointe"));
+    assert!(!mentions_attachment("Hello\n\n---------- Forwarded message ----------\nSee attachment"));
+    assert!(!mentions_attachment("Rejoint-nous au parc"), "a word that only contains \"joint\"");
+}
+
+#[test]
+fn names_and_types_of_files_sent() {
+    assert_eq!(outgoing_name("C:\\a\\b\"c\".pdf"), "b_c_.pdf");
+    assert_eq!(outgoing_name("..."), "attachment");
+    assert_eq!(outgoing_name("report\u{202e}fdp.exe"), "reportfdp.exe");
+    assert_eq!(content_type_for("Photo.JPG"), "image/jpeg");
+    assert_eq!(content_type_for("budget.xlsx"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    assert_eq!(content_type_for("mail.eml"), "application/octet-stream");
+    assert_eq!(content_type_for("noextension"), "application/octet-stream");
 }
 
 #[test]

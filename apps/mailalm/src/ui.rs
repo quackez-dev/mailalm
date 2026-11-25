@@ -2,18 +2,20 @@
 //! in an accordion), message list, reading pane and status bar. IMAP accounts (phase 2), Outlook
 //! accounts through Microsoft Graph (phase 3) and Gmail accounts through the Gmail API (phase 4).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use egui::{
     Align, Align2, Button, Color32, CornerRadius, FontId, Frame, Id, Key, Layout, Margin, Painter, Pos2, Rect, Response, RichText, ScrollArea,
     Sense, Stroke, TextEdit, Ui, Vec2, ViewportCommand, pos2, vec2,
 };
-use mailalm_engine::{Command, Engine, Link, SenderCommand, SenderRuleKind};
-use mailalm_mime::Outgoing;
+use mailalm_engine::{Command, Engine, Link, SenderCommand, SenderRuleKind, SizeLimit};
+use mailalm_mime::{AttachmentInfo, Outgoing};
 use mailalm_model::{Account, AccountId, Change, Focus, FolderRole, NewMail, Person, Provider, Summary, Workspace, account_color};
+use mailalm_safety::files::TempFolder;
 
 use crate::accounts::{AccountForm, FormResult, Secret};
+use crate::attachments::{self, Review, ReviewAction};
 use crate::compose::{Compose, ComposeAction};
 use crate::icons::{self, Icon};
 use crate::mailbox::{Mailboxes, MessageKey, Outcome, Reading};
@@ -102,6 +104,12 @@ pub struct MailApp {
     senders_open: Option<AccountId>,
     composes: Vec<Compose>,
     next_compose: u64,
+    /// The attachment being reviewed (its approval dialog is open).
+    review: Option<Review>,
+    /// The attachments reviewed in this session (their lock is shown open).
+    reviewed: HashSet<(MessageKey, usize)>,
+    /// The copies of attachments opened with Windows: emptied at start and at exit.
+    temp: TempFolder,
 }
 
 impl MailApp {
@@ -139,6 +147,9 @@ impl MailApp {
             senders_open: None,
             composes: Vec::new(),
             next_compose: 1,
+            review: None,
+            reviewed: HashSet::new(),
+            temp: TempFolder::new(Settings::cache_dir().join("open")),
         }
     }
 
@@ -249,6 +260,17 @@ impl MailApp {
                     self.next_compose += 1;
                     self.composes.push(Compose::new(id, account, &message, Some(text.clone())));
                     self.warn(text);
+                }
+                Outcome::Attachment { key, index, result } => {
+                    if let Some(r) = &mut self.review
+                        && r.key == key
+                        && r.index == index
+                    {
+                        if result.is_ok() {
+                            self.reviewed.insert((key, index));
+                        }
+                        r.loaded(result);
+                    }
                 }
                 Outcome::SearchResults { account, id, hits } => {
                     if let Some(s) = &mut self.search_state
@@ -704,6 +726,10 @@ impl MailApp {
             self.reading = None;
         }
         self.composes.retain(|c| c.account != id);
+        if self.review.as_ref().is_some_and(|r| r.key.account == id) {
+            self.review = None;
+        }
+        self.reviewed.retain(|(k, _)| k.account != id);
         self.view = match self.ws.focused_account() {
             Some(a) => View::Folder(a.id, None),
             None => View::Unified,
@@ -741,7 +767,7 @@ impl eframe::App for MailApp {
 impl MailApp {
     fn keys(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        if ctx.egui_wants_keyboard_input() || self.page != Page::Mail || self.form.is_some() {
+        if ctx.egui_wants_keyboard_input() || self.page != Page::Mail || self.form.is_some() || self.review.is_some() {
             return;
         }
         let (down, up, delete) = ctx.input(|i| (i.key_pressed(Key::ArrowDown), i.key_pressed(Key::ArrowUp), i.key_pressed(Key::Delete)));
@@ -1455,7 +1481,8 @@ fn size_text(bytes: usize) -> String {
 
 impl MailApp {
     fn reading_pane(&mut self, ui: &mut Ui) {
-        let mut said: Option<String> = None;
+        // Review… clicked: which attachment, from whom, and the message's sender checks.
+        let mut review_request: Option<(usize, AttachmentInfo, Person, mailalm_safety::Authentication)> = None;
         let mut action: Option<&'static str> = None;
         egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(24, 18))).show(ui, |ui| {
             let Some(r) = &self.reading else {
@@ -1524,11 +1551,12 @@ impl MailApp {
                     });
                 });
                 ui.add_space(10.0);
+                let auth = mailalm_safety::authentication(parsed.authentication_results.as_deref());
                 ui.horizontal_wrapped(|ui| {
                     if parsed.from_html {
                         pill(ui, "Shown as text · no web content, pictures or scripts loaded", t::MUTED, t::RAISED);
                     }
-                    pill(ui, "Sender checks (SPF, DKIM, DMARC) arrive in phase 5", t::FAINT, t::RAISED);
+                    attachments::auth_pills(ui, &auth);
                 });
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
@@ -1550,18 +1578,20 @@ impl MailApp {
                     });
                     ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
-                        for a in &parsed.attachments {
+                        for (index, a) in parsed.attachments.iter().enumerate() {
+                            let reviewed = self.reviewed.contains(&(r.key.clone(), index));
                             Frame::new().fill(t::PANEL2).stroke(Stroke::new(1.0, t::LINE)).corner_radius(8).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    let (r, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
-                                    ui.painter().rect_filled(r, 6.0, t::WARN_BG);
-                                    icons::paint(ui.painter(), r, Icon::Lock, t::WARN);
+                                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
+                                    ui.painter().rect_filled(rect, 6.0, if reviewed { t::RAISED } else { t::WARN_BG });
+                                    icons::paint(ui.painter(), rect, if reviewed { Icon::Check } else { Icon::Lock }, attachments::lock_color(reviewed));
                                     ui.vertical(|ui| {
                                         ui.label(RichText::new(&a.name).strong());
                                         ui.label(RichText::new(format!("{} · {} (declared)", size_text(a.size), a.declared_type)).size(12.0).color(t::FAINT));
                                     });
-                                    if ui.button("Review…").clicked() {
-                                        said = Some(format!("{}: attachment review arrives in phase 5. Nothing was opened, decoded or previewed.", a.name));
+                                    let review = ui.button("Review…").on_hover_text("Check what this file really is, then preview, save or open it");
+                                    if review.clicked() {
+                                        review_request = Some((index, a.clone(), parsed.from.clone(), auth.clone()));
                                     }
                                 });
                             });
@@ -1580,8 +1610,20 @@ impl MailApp {
             Some("Forward") => self.reply(false, true),
             _ => {}
         }
-        if let Some(text) = said {
-            self.say(text);
+        if let Some((index, info, sender, auth)) = review_request
+            && let Some(key) = self.reading.as_ref().map(|r| r.key.clone())
+        {
+            self.start_review(key, index, info, sender, auth);
+        }
+    }
+
+    /// Asks the account's worker for one attachment, and opens its approval dialog.
+    fn start_review(&mut self, key: MessageKey, index: usize, info: AttachmentInfo, sender: Person, auth: mailalm_safety::Authentication) {
+        let command = Command::Attachment { folder: key.folder.clone(), uid: key.uid, index };
+        if self.engine.send(key.account, command) {
+            self.review = Some(Review::new(key, index, info, sender, auth));
+        } else {
+            self.warn("The account is not running: the attachment cannot be read.");
         }
     }
 
@@ -1727,6 +1769,13 @@ impl MailApp {
 
     fn dialogs(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let close_review = match &mut self.review {
+            Some(review) => matches!(review.show(&ctx, &mut self.temp), ReviewAction::Close),
+            None => false,
+        };
+        if close_review {
+            self.review = None;
+        }
         if let Some(form) = &mut self.form {
             let id = AccountId(self.settings.next_id.max(1));
             let color = account_color(self.settings.accounts.len());
@@ -1804,12 +1853,15 @@ impl MailApp {
 
     fn compose_windows(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        let labels: HashMap<AccountId, String> = self.ws.accounts().iter().map(|a| (a.id, a.name.clone())).collect();
+        let accounts: HashMap<AccountId, (String, Provider)> = self.ws.accounts().iter().map(|a| (a.id, (a.name.clone(), a.provider))).collect();
         let mut done: Vec<usize> = Vec::new();
         let mut sends: Vec<(AccountId, Box<Outgoing>)> = Vec::new();
         for (n, c) in self.composes.iter_mut().enumerate() {
-            let label = labels.get(&c.account).cloned().unwrap_or_default();
-            match c.show(&ctx, &label) {
+            let (label, limit) = match accounts.get(&c.account) {
+                Some((name, provider)) => (name.clone(), SizeLimit::of(*provider)),
+                None => (String::new(), SizeLimit::Attachments(mailalm_engine::ATTACHMENTS_LIMIT)),
+            };
+            match c.show(&ctx, &label, limit) {
                 ComposeAction::None => {}
                 ComposeAction::Discard => done.push(n),
                 ComposeAction::Send(o) => {

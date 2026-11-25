@@ -15,5 +15,7 @@ mailalm-model = { workspace = true }
 mailalm-mime = { workspace = true }
 mailalm-net = { workspace = true }
 mailalm-store = { workspace = true }
+# An attachment's real type and warnings, worked out by the worker when the user reviews it.
+mailalm-safety = { workspace = true }
 keyring = { workspace = true }
 log = { workspace = true }

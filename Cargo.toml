@@ -15,6 +15,7 @@ mailalm-mime = { path = "crates/mime" }
 mailalm-net = { path = "crates/net" }
 mailalm-store = { path = "crates/store" }
 mailalm-engine = { path = "crates/engine" }
+mailalm-safety = { path = "crates/safety" }
 
 # Every crate below is at the version, and with the features, MailCraft v0.41.0 uses: audited there
 # (audits/mailcraft), and the Cargo.lock is checked against that one (audits/mailalm/README.md).
@@ -47,6 +48,12 @@ iana-time-zone = "0.1"
 egui = "0.37"
 eframe = { version = "0.37", default-features = false }
 log = "0.4"
+# Attachment previews (phase 5), only after the user's approval: pictures decoded with size limits
+# (image, as MailCraft's ui-egui has it) and PDF pages drawn in pure Rust (hayro, without its
+# embedded fonts, as MailCraft has it). Native file dialogs: attach, save as (rfd, as MailCraft's app).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+hayro = { version = "0.9", default-features = false }
+rfd = "0.18"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

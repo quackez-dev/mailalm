@@ -1,0 +1,13 @@
+[package]
+name = "mailalm-safety"
+description = "MailALM attachment safety: the real type of a file from its content, the warnings, what may be done with it (preview, save, open with Windows), the sender checks (SPF, DKIM, DMARC) and the Mark-of-the-Web (pure, tested; std only)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

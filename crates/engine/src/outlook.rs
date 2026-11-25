@@ -150,6 +150,7 @@ impl Outlook {
                 }
             }
             Command::Open { folder, uid } => self.open(&folder, uid),
+            Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
             Command::Apply(change) => self.apply(change, commands),
             Command::Send(message) => self.send_message(*message, commands),
             Command::Search { id, query } => {
@@ -174,6 +175,7 @@ impl Outlook {
             served = true;
             match c {
                 Command::Open { folder, uid } => self.open(&folder, uid),
+                Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
                 Command::Search { id, query } => {
                     let hits = local::search(&self.store, &self.folders, &query);
                     self.emit(Event::SearchResults { account: self.id, id, hits });
@@ -672,6 +674,17 @@ impl Outlook {
                 return;
             }
         };
+        // Graph's sendMail takes about 4 MB per request, and the message goes in base64. Larger
+        // ones need an upload session, which MailALM does not do yet.
+        if raw.len() > crate::OUTLOOK_MESSAGE_LIMIT {
+            let text = format!(
+                "The message was not sent: it weighs {:.1} MB, and MailALM sends at most {:.0} MB from an Outlook account for now. Remove or shrink an attachment, or share the file by a link.",
+                raw.len() as f64 / 1e6,
+                crate::OUTLOOK_MESSAGE_LIMIT as f64 / 1e6
+            );
+            self.emit(Event::SendFailed { account: self.id, text, message: Box::new(message) });
+            return;
+        }
         self.activity(Some(format!("Sending \"{}\"…", message.subject)));
         if let Err(e) = self.call(|c| c.send_mime(&raw)) {
             self.activity(None);

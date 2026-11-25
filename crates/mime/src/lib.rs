@@ -3,19 +3,21 @@
 //! - [`parse`] reads a whole message for the reading pane: who, when, the text (HTML converted to
 //!   text, PLAN.md section 10.2: no web engine), and the **list** of attachments. It never decodes an
 //!   attachment's content: what is done with an attachment is decided by the user (section 10.1).
+//! - [`attachment`] decodes one attachment, only when the user asks to review it.
 //! - [`summary_from_header`] reads the header block the sync fetches for the message list.
-//! - [`build`] writes an outgoing message, with a Message-ID that names the sender's domain, never
-//!   this computer's name.
+//! - [`build`] writes an outgoing message, with its attachments, with a Message-ID that names the
+//!   sender's domain, never this computer's name.
 //!
 //! Everything read here comes from strangers: header text is cleaned of control and direction
 //! characters before it is shown ([`clean_line`]), and the HTML converted is capped in size.
 
 use std::collections::hash_map::RandomState;
+use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mail_parser::{AddressList, MessageParser, PartKind};
+use mail_parser::{AddressList, MessagePart, MessageParser, PartKind};
 use mailalm_model::{Flags, Person, Summary};
 
 /// The most HTML converted to text: a larger body is cut (with a note) before conversion, which
@@ -28,6 +30,12 @@ pub const PREVIEW_CHARS: usize = 160;
 /// The width HTML is laid out to as text. The reading pane wraps lines itself, so this only
 /// decides where html2text breaks paragraphs it has to break (tables).
 const HTML_WIDTH: usize = 200;
+/// The largest attachment decoded for a review: a larger one is refused before it is decoded.
+pub const MAX_ATTACHMENT: usize = 64 << 20;
+/// The most of an `Authentication-Results` header kept.
+const MAX_AUTH_HEADER: usize = 16 << 10;
+/// The longest announced name kept (for the check on hidden characters).
+const MAX_RAW_NAME: usize = 1024;
 
 /// One attachment, as listed: never opened, never decoded here.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +67,26 @@ pub struct Parsed {
     /// The text was converted from HTML.
     pub from_html: bool,
     pub attachments: Vec<AttachmentInfo>,
+    /// The value of the first (topmost) `Authentication-Results` header: the sender checks the
+    /// receiving provider made (read by `mailalm_safety::authentication`).
+    pub authentication_results: Option<String>,
+}
+
+/// One attachment's content, decoded for a review the user asked for.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AttachmentData {
+    pub info: AttachmentInfo,
+    /// The name as the message announces it, before cleaning (hidden characters included), at
+    /// most 1024 characters; empty when it has none.
+    pub raw_name: String,
+    pub bytes: Vec<u8>,
+}
+
+impl fmt::Debug for AttachmentData {
+    /// Without the content.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AttachmentData").field("info", &self.info).field("raw_name", &self.raw_name).field("bytes", &self.bytes.len()).finish()
+    }
 }
 
 /// Reads a whole message. `None` when it is not a message at all.
@@ -74,6 +102,11 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
         date: m.date().map(|d| d.to_timestamp()),
         message_id: m.message_id().map(clean_id).unwrap_or_default(),
         references: m.references().map(|l| l.iter().map(clean_id).collect()).unwrap_or_default(),
+        authentication_results: m
+            .headers()
+            .all("Authentication-Results")
+            .next()
+            .map(|h| String::from_utf8_lossy(h.raw_value()).chars().take(MAX_AUTH_HEADER).collect()),
         ..Parsed::default()
     };
 
@@ -96,18 +129,43 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
     p.text = clean_text(&p.text);
 
     for (n, part) in m.attachments().enumerate() {
-        let declared_type = part
-            .content_type()
-            .map(|c| match c.subtype() {
-                Some(sub) => format!("{}/{}", c.ctype(), sub),
-                None => c.ctype().to_owned(),
-            })
-            .unwrap_or_else(|| "application/octet-stream".to_owned())
-            .to_ascii_lowercase();
-        let name = part.attachment_name().map(clean_file_name).filter(|n| !n.is_empty()).unwrap_or_else(|| format!("attachment-{}", n + 1));
-        p.attachments.push(AttachmentInfo { name, declared_type: clean_line(&declared_type), size: part.decoded_len() });
+        p.attachments.push(attachment_info(n, &part));
     }
     Some(p)
+}
+
+/// How an attachment is listed: its cleaned name (or `attachment-<n + 1>`), its declared type,
+/// its decoded size.
+fn attachment_info(n: usize, part: &MessagePart<'_>) -> AttachmentInfo {
+    let declared_type = part
+        .content_type()
+        .map(|c| match c.subtype() {
+            Some(sub) => format!("{}/{}", c.ctype(), sub),
+            None => c.ctype().to_owned(),
+        })
+        .unwrap_or_else(|| "application/octet-stream".to_owned())
+        .to_ascii_lowercase();
+    let name = part.attachment_name().map(clean_file_name).filter(|n| !n.is_empty()).unwrap_or_else(|| format!("attachment-{}", n + 1));
+    AttachmentInfo { name, declared_type: clean_line(&declared_type), size: part.decoded_len() }
+}
+
+/// Decodes attachment `index` (in the order [`parse`] lists them) of a whole message: only when
+/// the user asks to review it (PLAN.md, section 10.1). One larger than [`MAX_ATTACHMENT`] is
+/// refused before it is decoded. The error is shown to the user as it is.
+pub fn attachment(raw: &[u8], index: usize) -> Result<AttachmentData, String> {
+    let parser = MessageParser::default();
+    let m = parser.parse(raw).ok_or("This message could not be read.")?;
+    let part = m.attachments().nth(index).ok_or("This attachment is no longer in the message.")?;
+    let info = attachment_info(index, &part);
+    if info.size > MAX_ATTACHMENT {
+        return Err(format!("This attachment is larger than {} MB: MailALM does not decode it.", MAX_ATTACHMENT >> 20));
+    }
+    let raw_name = part.attachment_name().map(|n| n.chars().take(MAX_RAW_NAME).collect()).unwrap_or_default();
+    let bytes = part.decoded().into_owned();
+    if bytes.len() > MAX_ATTACHMENT {
+        return Err(format!("This attachment is larger than {} MB: MailALM does not decode it.", MAX_ATTACHMENT >> 20));
+    }
+    Ok(AttachmentData { info, raw_name, bytes })
 }
 
 /// The summary the message list needs, from the header block the sync fetched. `internal_date`
@@ -264,6 +322,34 @@ pub struct Outgoing {
     /// The message replied to, without angle brackets.
     pub in_reply_to: Option<String>,
     pub references: Vec<String>,
+    /// Files the user attached.
+    pub attachments: Vec<OutgoingAttachment>,
+}
+
+/// A file attached to a message being written.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct OutgoingAttachment {
+    /// The file's name, as the recipient sees it.
+    pub name: String,
+    /// Its type, guessed from its extension ([`content_type_for`]).
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl OutgoingAttachment {
+    /// An attachment named `name` (made safe for a header), its type guessed from the name.
+    pub fn new(name: &str, bytes: Vec<u8>) -> Self {
+        let name = outgoing_name(name);
+        let content_type = content_type_for(&name).to_owned();
+        OutgoingAttachment { name, content_type, bytes }
+    }
+}
+
+impl fmt::Debug for OutgoingAttachment {
+    /// Without the content.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OutgoingAttachment").field("name", &self.name).field("content_type", &self.content_type).field("bytes", &self.bytes.len()).finish()
+    }
 }
 
 impl Outgoing {
@@ -271,10 +357,109 @@ impl Outgoing {
     pub fn recipients(&self) -> Vec<String> {
         self.to.iter().chain(&self.cc).chain(&self.bcc).map(|p| p.address.clone()).collect()
     }
+
+    /// The attachments' total size, in bytes.
+    pub fn attachments_size(&self) -> usize {
+        attachments_size(&self.attachments)
+    }
+
+    /// About how large the written message is ([`estimated_size`]).
+    pub fn estimated_size(&self) -> usize {
+        estimated_size(&self.text, &self.attachments)
+    }
 }
 
-/// Writes the message (RFC 5322, plain text) for SMTP. The Bcc header is not written: Bcc
-/// recipients are only in the envelope. Returns the message and its Message-ID.
+/// The attachments' total size, in bytes.
+pub fn attachments_size(attachments: &[OutgoingAttachment]) -> usize {
+    attachments.iter().fold(0usize, |n, a| n.saturating_add(a.bytes.len()))
+}
+
+/// About how large a message with this text and these attachments is once written, a little
+/// more rather than less: base64 makes an attachment a third larger (76 characters and a line
+/// end for each 57 bytes), plus each part's header and the message's.
+pub fn estimated_size(text: &str, attachments: &[OutgoingAttachment]) -> usize {
+    let parts = attachments.iter().fold(0usize, |n, a| n.saturating_add(a.bytes.len().div_ceil(57).saturating_mul(78)).saturating_add(400));
+    parts.saturating_add(text.len().saturating_mul(2)).saturating_add(2048)
+}
+
+/// An attachment's name as it is written in the message: no folder, no control or invisible
+/// character, no quote or backslash, at most 200 characters; `attachment` when nothing is left.
+pub fn outgoing_name(name: &str) -> String {
+    let leaf = clean_file_name(name);
+    let s: String = leaf.chars().filter(|c| !matches!(c, '"' | '\\')).take(200).collect();
+    let s = s.trim().to_owned();
+    if s.is_empty() { "attachment".to_owned() } else { s }
+}
+
+/// The type of a file to send, from its extension; `application/octet-stream` when unknown.
+pub fn content_type_for(name: &str) -> &'static str {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" | "jpe" | "jfif" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "webp" => "image/webp",
+        "tif" | "tiff" => "image/tiff",
+        "heic" => "image/heic",
+        "svg" => "image/svg+xml",
+        "txt" | "log" | "md" => "text/plain",
+        "csv" => "text/csv",
+        "htm" | "html" => "text/html",
+        "ics" => "text/calendar",
+        "vcf" => "text/vcard",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "zip" => "application/zip",
+        "7z" => "application/x-7z-compressed",
+        "rar" => "application/vnd.rar",
+        "gz" | "tgz" => "application/gzip",
+        "doc" | "dot" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" | "pps" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "odt" => "application/vnd.oasis.opendocument.text",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        "odp" => "application/vnd.oasis.opendocument.presentation",
+        "rtf" => "application/rtf",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "m4a" => "audio/mp4",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        // A message is sent as a file (`message/rfc822` may not be base64-encoded).
+        _ => "application/octet-stream",
+    }
+}
+
+/// Whether the text the user wrote mentions an attachment (English or French): "attach…",
+/// "pièce jointe", "ci-joint", "joint(e)(s)". Quoted lines (`>`) and a forwarded message are not
+/// the user's words and are skipped.
+pub fn mentions_attachment(text: &str) -> bool {
+    let mut own = String::new();
+    for line in text.lines() {
+        let t = line.trim_start();
+        if t.starts_with("---------- Forwarded message") || t.starts_with("-----Original Message") {
+            break;
+        }
+        if t.starts_with('>') {
+            continue;
+        }
+        own.push_str(&line.to_lowercase());
+        own.push('\n');
+    }
+    if own.contains("attach") || own.contains("ci-joint") || own.contains("ci joint") {
+        return true;
+    }
+    own.split(|c: char| !c.is_alphanumeric()).any(|w| matches!(w, "joint" | "jointe" | "joints" | "jointes"))
+}
+
+/// Writes the message (RFC 5322, plain text; `multipart/mixed` with its attachments) for SMTP. The
+/// Bcc header is not written: Bcc recipients are only in the envelope. Returns the message and its
+/// Message-ID.
 pub fn build(out: &Outgoing) -> Result<(Vec<u8>, String), String> {
     write(out, false)
 }
@@ -315,6 +500,17 @@ fn write(out: &Outgoing, with_bcc: bool) -> Result<(Vec<u8>, String), String> {
     }
     if !out.references.is_empty() {
         b = b.references(out.references.clone());
+    }
+    for a in &out.attachments {
+        // The name again through `outgoing_name`: a message that came back from a failed send
+        // keeps what it had.
+        let name = outgoing_name(&a.name);
+        let content_type = if a.content_type.is_empty() || !a.content_type.bytes().all(|c| c.is_ascii_graphic()) {
+            content_type_for(&name).to_owned()
+        } else {
+            a.content_type.clone()
+        };
+        b = b.attachment(content_type, name, a.bytes.clone());
     }
     let raw = b.write_to_vec().map_err(|e| format!("The message could not be written: {e}"))?;
     Ok((raw, id))
@@ -454,7 +650,7 @@ pub fn reply(p: &Parsed, me: &Person, all: bool, date_line: &str) -> Outgoing {
 }
 
 /// What a forward starts with: no recipient, "Fwd: ", and the original message's header and text.
-/// (The attachments are added in phase 5.)
+/// The original's attachments are not carried over: the user attaches what should go on.
 pub fn forward(p: &Parsed, me: &Person, date_line: &str) -> Outgoing {
     let list = |v: &[Person]| v.iter().map(format_person).collect::<Vec<_>>().join(", ");
     let mut header = format!("\n\n---------- Forwarded message ----------\nFrom: {}\nDate: {}\nSubject: {}\nTo: {}\n", format_person(&p.from), date_line, p.subject, list(&p.to));

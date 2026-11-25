@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use mailalm_engine::{Event, Link, SenderRule};
+use mailalm_engine::{Event, Link, Reviewed, SenderRule};
 use mailalm_mime::Parsed;
 use mailalm_model::{AccountId, Folder, FolderRole, Summary};
 
@@ -80,6 +80,8 @@ pub enum Outcome {
     Error(String),
     SendFailed { account: AccountId, text: String, message: Box<mailalm_mime::Outgoing> },
     SearchResults { account: AccountId, id: u64, hits: Vec<(String, Summary)> },
+    /// An attachment the user asked to review.
+    Attachment { key: MessageKey, index: usize, result: Result<Box<Reviewed>, String> },
 }
 
 impl Mailboxes {
@@ -126,6 +128,7 @@ impl Mailboxes {
                 state.sender_rules = Some(rules);
                 Outcome::None
             }
+            Event::Attachment { folder, uid, index, result, .. } => Outcome::Attachment { key: MessageKey { account, folder, uid }, index, result },
         }
     }
 }

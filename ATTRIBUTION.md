@@ -10,7 +10,7 @@ MailCraft's copyright notice (from its `LICENSE-MIT`):
 
 The MIT and Apache 2.0 licence texts are in MailALM's `LICENSE-MIT` and `LICENSE-APACHE`. Each adapted
 file starts with a comment naming its origin and what changed. The copy was read and audited before use:
-`audits/mailalm/reprise-net.md` in CraftTools.
+`audits/mailalm/reprise-net.md`, `reprise-oauth-graph.md` and `reprise-apercus.md` in CraftTools.
 
 ## Files
 
@@ -38,6 +38,7 @@ file starts with a comment naming its origin and what changed. The copy was read
 | `crates/net/src/oauth/tests.rs` | the tests in `crates/net/src/oauth.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/graph.rs` | `crates/net/src/exchange/graph.rs` | MIT OR Apache-2.0 |
 | `crates/net/src/graph/convert.rs` | `flags` from `crates/net/src/exchange/graph/flags.rs`, `address` from `crates/net/src/exchange/graph.rs` | MIT OR Apache-2.0 |
+| `apps/mailalm/src/preview.rs` | `decode_pixels` from `crates/ui-egui/src/reading/attachments.rs`, `pdf_page` and `is_bold` from `crates/ui-egui/src/look/thumbs.rs` | MIT OR Apache-2.0 |
 
 The test certificates and keys in `crates/net/src/stream/trust/test_certs.rs` were made up for
 MailCraft's tests; they are compiled into tests only and are used nowhere else.

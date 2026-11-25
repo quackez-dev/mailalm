@@ -1,8 +1,10 @@
 //! What every kind of account does the same way with its cache: changes shown before the server
 //! has them, and the search.
 
-use mailalm_model::{Change, Folder, Query, Summary};
+use mailalm_model::{AccountId, Change, Folder, Query, Summary};
 use mailalm_store::Store;
+
+use crate::{Event, Reviewed};
 
 /// The most results a search returns per account.
 const MAX_HITS: usize = 1_000;
@@ -51,6 +53,24 @@ pub(crate) fn search(store: &Store, folders: &[Folder], query: &str) -> Vec<(Str
     }
     hits.sort_by(|a, b| b.1.date.cmp(&a.1.date));
     hits
+}
+
+/// An attachment the user asked to review: decoded from the message in the cache (the reading
+/// pane opened it, so it is there) and looked at. Nothing else ever decodes an attachment.
+pub(crate) fn review(store: &Store, account: AccountId, folder: &str, uid: u32, index: usize) -> Event {
+    let result = match store.message(folder, uid) {
+        None => Err("This message is no longer in the cache: open it again, then review the attachment.".to_owned()),
+        Some(raw) => mailalm_mime::attachment(&raw, index).map(|data| {
+            let report = mailalm_safety::assess(&mailalm_safety::Input {
+                raw_name: &data.raw_name,
+                name: &data.info.name,
+                declared_type: &data.info.declared_type,
+                bytes: &data.bytes,
+            });
+            Box::new(Reviewed { data, report })
+        }),
+    };
+    Event::Attachment { account, folder: folder.to_owned(), uid, index, result }
 }
 
 pub(crate) fn sort_newest_first(s: &mut [Summary]) {

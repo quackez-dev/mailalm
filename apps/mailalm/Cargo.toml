@@ -15,6 +15,7 @@ mailalm-model = { workspace = true }
 mailalm-mime = { workspace = true }
 mailalm-store = { workspace = true }
 mailalm-engine = { workspace = true }
+mailalm-safety = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = { workspace = true }
@@ -27,6 +28,11 @@ egui = { workspace = true, features = ["monochrome_emoji_fonts"] }
 # Without default features, so each one is named. No persistence, no system fonts, no links.
 eframe = { workspace = true, features = ["accesskit", "clipboard", "default_fonts", "wgpu", "wayland", "x11"] }
 log = { workspace = true }
+# Attachments (phase 5): the preview the user asks for (pictures, PDF pages), and the file dialogs
+# (Attach…, Save as…).
+image = { workspace = true }
+hayro = { workspace = true }
+rfd = { workspace = true }
 
 [build-dependencies]
 # Icon, VERSIONINFO and manifest in mailalm.exe (build.rs, Windows only). It runs the Windows SDK's

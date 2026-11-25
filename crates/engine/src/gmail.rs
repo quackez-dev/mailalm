@@ -193,6 +193,7 @@ impl Gmail {
                 }
             }
             Command::Open { folder, uid } => self.open(&folder, uid),
+            Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
             Command::Apply(change) => self.apply(change, commands),
             Command::Send(message) => self.send_message(*message, commands),
             Command::Search { id, query } => {
@@ -217,6 +218,7 @@ impl Gmail {
             served = true;
             match c {
                 Command::Open { folder, uid } => self.open(&folder, uid),
+                Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
                 Command::Search { id, query } => {
                     let hits = local::search(&self.store, &self.folders, &query);
                     self.emit(Event::SearchResults { account: self.id, id, hits });

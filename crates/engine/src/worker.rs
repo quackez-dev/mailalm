@@ -157,6 +157,7 @@ impl Worker {
                 }
             }
             Command::Open { folder, uid } => self.open(&folder, uid),
+            Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
             Command::Apply(change) => self.apply(change, commands),
             Command::Send(message) => self.send_message(*message, commands),
             Command::Search { id, query } => self.search(id, &query),
@@ -181,6 +182,7 @@ impl Worker {
             served = true;
             match c {
                 Command::Open { folder, uid } => self.open(&folder, uid),
+                Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
                 Command::Search { id, query } => self.search(id, &query),
                 Command::Apply(change) => self.apply_local(change),
                 Command::Stop => {

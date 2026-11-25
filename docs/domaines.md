@@ -52,6 +52,19 @@ mise à jour automatique, pas de rapport de plantage, pas d'autoconfiguration pa
 - L'API Gmail ne donne aucun lien à suivre (la pagination passe par des jetons) : MailALM ne contacte que les
   adresses ci-dessus.
 
+## Phase 5 : pièces jointes
+
+Aucun nouveau domaine.
+
+- La revue, l'aperçu (images, pages PDF, texte), l'enregistrement et la copie ouverte avec Windows se font à partir
+  du message déjà en cache : rien n'est téléchargé, et un PDF prévisualisé ne charge rien (hayro ne suit ni lien
+  ni ressource externe).
+- « Ouvrir avec Windows » remet une copie au programme que Windows associe à son extension. Ce que ce programme
+  contacte ensuite relève de lui, pas de MailALM.
+- Envoi depuis un compte Outlook : Graph `sendMail` seulement, comme en phase 3, limité à 3 Mo par message. Les
+  sessions de téléversement de Graph (`createUploadSession`), qui renverraient vers une autre adresse, ne sont pas
+  utilisées.
+
 ## Phases suivantes
 
 L'agenda, les tâches et les contacts (phase 6) ajouteront les API Google Agenda, Tasks et People, et l'agenda de

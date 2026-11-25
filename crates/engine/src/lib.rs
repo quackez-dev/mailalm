@@ -14,8 +14,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
-use mailalm_mime::{Outgoing, Parsed};
+use mailalm_mime::{AttachmentData, Outgoing, OutgoingAttachment, Parsed};
 use mailalm_model::{Account, AccountId, Change, Folder, Provider, Summary};
+use mailalm_safety::Report;
 
 mod gmail;
 mod ids;
@@ -42,6 +43,10 @@ pub enum Command {
     Send(Box<Outgoing>),
     /// Searches the cache. `id` comes back with the results.
     Search { id: u64, query: String },
+    /// The user asked to review attachment `index` of a message (PLAN.md, section 10.1): it is
+    /// decoded from the cached message and looked at ([`mailalm_safety::assess`]); the answer is
+    /// [`Event::Attachment`]. Never sent by anything but the user's click.
+    Attachment { folder: String, uid: u32, index: usize },
     /// Signs in again (the password was changed).
     Reconnect,
     /// The account's blocked and allowed senders, kept on the server (Gmail filters). Other
@@ -116,6 +121,51 @@ pub enum Event {
     SearchResults { account: AccountId, id: u64, hits: Vec<(String, Summary)> },
     /// The senders the account blocks or allows on its server, after [`SenderCommand`]s.
     SenderRules { account: AccountId, rules: Vec<SenderRule> },
+    /// An attachment the user asked to review, with what MailALM found about it; or why it could
+    /// not be read.
+    Attachment { account: AccountId, folder: String, uid: u32, index: usize, result: Result<Box<Reviewed>, String> },
+}
+
+/// An attachment decoded for its review, and what MailALM found about it.
+#[derive(Debug)]
+pub struct Reviewed {
+    pub data: AttachmentData,
+    pub report: Report,
+}
+
+/// What MailALM lets a message weigh before sending it, by provider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeLimit {
+    /// The attachments together (what the providers announce: 25 MB for Gmail and most IMAP
+    /// providers).
+    Attachments(usize),
+    /// The whole written message (Outlook: Microsoft Graph's `sendMail` takes about 4 MB per
+    /// request, and the message goes in base64, a third larger).
+    Message(usize),
+}
+
+/// The attachments' limit for Gmail and IMAP accounts: 25 MB.
+pub const ATTACHMENTS_LIMIT: usize = 25 * 1024 * 1024;
+/// The largest written message an Outlook account sends: 3 MB, which Graph receives as 4 MB of
+/// base64. Larger messages need Graph's upload sessions, not done yet: they are refused.
+pub const OUTLOOK_MESSAGE_LIMIT: usize = 3 * 1000 * 1000;
+
+impl SizeLimit {
+    pub fn of(provider: Provider) -> Self {
+        match provider {
+            Provider::Outlook => SizeLimit::Message(OUTLOOK_MESSAGE_LIMIT),
+            Provider::Gmail | Provider::Imap(_) => SizeLimit::Attachments(ATTACHMENTS_LIMIT),
+        }
+    }
+
+    /// What counts against the limit for a message with this text and these attachments
+    /// (estimated for a whole message), and the limit.
+    pub fn measure(self, text: &str, attachments: &[OutgoingAttachment]) -> (usize, usize) {
+        match self {
+            SizeLimit::Attachments(limit) => (mailalm_mime::attachments_size(attachments), limit),
+            SizeLimit::Message(limit) => (mailalm_mime::estimated_size(text, attachments), limit),
+        }
+    }
 }
 
 impl Event {
@@ -131,7 +181,8 @@ impl Event {
             | Event::Sent { account, .. }
             | Event::SendFailed { account, .. }
             | Event::SearchResults { account, .. }
-            | Event::SenderRules { account, .. } => *account,
+            | Event::SenderRules { account, .. }
+            | Event::Attachment { account, .. } => *account,
         }
     }
 }

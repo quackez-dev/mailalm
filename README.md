@@ -3,12 +3,21 @@
 A mail and calendar client for Windows, written in Rust with egui: Outlook.com/Hotmail, Gmail and
 classic IMAP accounts side by side, each kept clearly apart.
 
-**Status: phase 4.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
+**Status: phase 5.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
 (Microsoft Graph) and Gmail accounts (Gmail API), the last two signed in on the provider's page in
 the browser: reading, sending in plain text, folders and labels, moving, flags, a local cache,
 search in the cache, and changes made while offline. Outlook accounts report junk to Outlook.com;
-Gmail accounts report spam to Gmail and block or allow senders with Gmail filters. Attachments can
-be listed but not opened yet (phase 5).
+Gmail accounts report spam to Gmail and block or allow senders with Gmail filters.
+
+Attachments stay locked until they are reviewed one by one: the review shows the file's real
+type (found from its content, compared with its name), its size, the sender and the message's
+SPF, DKIM and DMARC results, and the warnings (double extension, program, script, macros,
+archive, shortcut, disk image…). MailALM can then preview it itself (pictures, the first pages
+of a PDF, text), save it (with Windows' "from the internet" mark), or, for PDFs, pictures, .txt
+files and Office documents without macros only, open a marked copy with Windows after a second
+confirmation. Messages are sent with attachments (Attach… or dropped on the window), with a
+warning when the text mentions one that is missing; an Outlook account sends at most 3 MB for
+now (no upload session yet).
 
 ## Principles
 
@@ -30,7 +39,8 @@ crates/model/     accounts, servers, folders, summaries, search queries, workspa
 crates/mime/      reading messages and writing outgoing mail (mail-parser, mail-builder, html2text)
 crates/net/       IMAP, TLS, SMTP, Microsoft sign-in and Graph, adapted from MailCraft (see ATTRIBUTION.md)
 crates/store/     the local cache, one folder per account
-crates/engine/    one worker thread per account (IMAP or Outlook): cache first, then the server; offline changes
+crates/safety/    attachments: real type from the content, warnings, what may be done, SPF/DKIM/DMARC, Mark-of-the-Web (pure, tested)
+crates/engine/    one worker thread per account (IMAP, Outlook or Gmail): cache first, then the server; offline changes
 docs/             the domains MailALM contacts; registering MailALM with Microsoft
 ```
 
