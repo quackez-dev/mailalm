@@ -2363,6 +2363,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "mailalm-porting"
+version = "0.1.0"
+dependencies = [
+ "epaint_default_fonts",
+ "mail-builder",
+ "mailalm-mime",
+ "mailalm-model",
+ "mailalm-print",
+ "mailalm-pst",
+ "mailalm-store",
+]
+
+[[package]]
+name = "mailalm-print"
+version = "0.1.0"
+dependencies = [
+ "epaint_default_fonts",
+ "miniz_oxide 0.9.1",
+ "skrifa 0.49.0",
+]
+
+[[package]]
+name = "mailalm-pst"
+version = "0.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "mailalm-safety"
 version = "0.1.0"
 

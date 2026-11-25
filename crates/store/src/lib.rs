@@ -166,6 +166,48 @@ impl Store {
         write_json(&dir.join("ids.json"), &ids)
     }
 
+    /// Adds one message to a folder kept only on this computer (imported mail): see
+    /// [`Store::import_messages`]. Its new UID.
+    pub fn import_message(&self, path: &str, raw: &[u8], summary: Summary, text: &str) -> io::Result<u32> {
+        let uids = self.import_messages(path, vec![(raw.to_vec(), summary, text.to_owned())])?;
+        uids.first().copied().ok_or_else(|| io::Error::other("the message was not added"))
+    }
+
+    /// Adds messages to a folder kept only on this computer (imported mail): each `(raw message,
+    /// its summary, its text for the search)` gets the next UID of the folder (the summary's
+    /// own `uid` is replaced), its files, and its line in the folder's index; the folder's state
+    /// is created when it has none. Their new UIDs, in order.
+    ///
+    /// Only for a folder no server syncs: a server's next sync would give its own messages the
+    /// same UIDs. The index is read and written once for the whole batch, so a large import
+    /// goes in batches of a few hundred messages.
+    pub fn import_messages(&self, path: &str, batch: Vec<(Vec<u8>, Summary, String)>) -> io::Result<Vec<u32>> {
+        let mut state = self.folder_state(path).unwrap_or_else(|| FolderState { path: path.to_owned(), uidvalidity: 1, uidnext: 1, delta: None });
+        let mut summaries = self.summaries(path);
+        let highest = summaries.iter().map(|s| s.uid).max().unwrap_or(0);
+        let mut next = state.uidnext.max(highest.saturating_add(1)).max(1);
+        let mut uids = Vec::with_capacity(batch.len());
+        for (raw, mut summary, text) in batch {
+            if next == u32::MAX {
+                break;
+            }
+            self.save_message(path, next, &raw, &text)?;
+            summary.uid = next;
+            summaries.push(summary);
+            uids.push(next);
+            next += 1;
+        }
+        // Newest first, as the folder's index is kept.
+        summaries.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| b.uid.cmp(&a.uid)));
+        self.save_summaries(path, &summaries)?;
+        state.uidnext = next;
+        self.save_folder_state(&state)?;
+        if uids.is_empty() && next == u32::MAX {
+            return Err(io::Error::other("this folder holds as many messages as it can"));
+        }
+        Ok(uids)
+    }
+
     /// Changes waiting for the server, oldest first.
     pub fn pending(&self) -> Vec<Change> {
         read_json(&self.root.join("pending.json")).unwrap_or_default()
@@ -260,6 +302,28 @@ mod tests {
 
         s.delete_all().expect("delete");
         assert!(!base.join("3").exists());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn imported_messages_take_the_next_uids() {
+        let base = temp("import");
+        let s = Store::open(&base, AccountId(4)).expect("open");
+        let old = Summary { uid: 5, date: 100, ..Summary::default() };
+        s.save_summaries("Imported/Old", std::slice::from_ref(&old)).expect("summaries");
+        let one = s.import_message("Imported/Old", b"one", Summary { uid: 99, date: 300, ..Summary::default() }, "one").expect("import");
+        assert_eq!(one, 6, "after the highest UID the folder has");
+        let more = s
+            .import_messages("Imported/Old", vec![(b"two".to_vec(), Summary { date: 200, ..Summary::default() }, "two".into()), (b"three".to_vec(), Summary::default(), "three".into())])
+            .expect("batch");
+        assert_eq!(more, vec![7, 8]);
+        assert_eq!(s.message("Imported/Old", 7).as_deref(), Some(&b"two"[..]));
+        assert_eq!(s.text("Imported/Old", 8).as_deref(), Some("three"));
+        let order: Vec<u32> = s.summaries("Imported/Old").iter().map(|m| m.uid).collect();
+        assert_eq!(order, vec![6, 7, 5, 8], "newest first");
+        assert_eq!(s.folder_state("Imported/Old").map(|st| st.uidnext), Some(9));
+        // A new folder starts at 1.
+        assert_eq!(s.import_message("New", b"x", Summary::default(), "").expect("new"), 1);
         let _ = fs::remove_dir_all(&base);
     }
 

@@ -43,6 +43,10 @@ crates/net/       IMAP, TLS, SMTP, Microsoft and Google sign-in, Graph, Gmail, G
 crates/store/     the local cache, one folder per account
 crates/safety/    attachments: real type from the content, warnings, what may be done, SPF/DKIM/DMARC, Mark-of-the-Web (pure, tested)
 crates/engine/    one worker thread per account (IMAP, Outlook or Gmail): cache first, then the server; offline changes
+crates/porting/   import and export: a message as .eml or PDF, a folder as .mbox; import of .eml, .mbox
+                  (Thunderbird, eM Client's export) and Outlook .pst/.ost files, capped as received mail
+crates/pst/       reading Outlook data files (.pst, .ost), read only; adapted from MailCraft
+crates/print/     a message's header and text as a PDF; adapted from MailCraft
 docs/             the domains MailALM contacts; registering MailALM with Microsoft
 ```
 

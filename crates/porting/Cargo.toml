@@ -1,0 +1,21 @@
+[package]
+name = "mailalm-porting"
+description = "MailALM import and export: messages as .eml, folders as .mbox, a message as PDF; import of .eml, .mbox (Thunderbird, eM Client's export) and Outlook .pst/.ost files, every input capped as received mail is"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mailalm-model = { workspace = true }
+mailalm-mime = { workspace = true }
+mailalm-store = { workspace = true }
+mailalm-pst = { workspace = true }
+mailalm-print = { workspace = true }
+mail-builder = { workspace = true }
+# The font the PDF embeds: egui's own Ubuntu Light, already in the app; no system font is read.
+epaint_default_fonts = { workspace = true }
