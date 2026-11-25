@@ -189,6 +189,38 @@ pub struct Summary {
     /// The first words of the text, once the body is in the cache.
     pub preview: String,
     pub message_id: String,
+    /// The message it answers (its `In-Reply-To`, without angle brackets): the follow-ups look
+    /// for answers by it (C2).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub in_reply_to: String,
+    /// The messages of its thread before it (`References`, without angle brackets), at most
+    /// [`MAX_REFERENCES`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<String>,
+    /// The provider's own thread id, when it has one (Graph's `conversationId`, Gmail's
+    /// `threadId`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub thread: String,
+    /// The provider's categories (Outlook's categories; Gmail's Inbox categories: Primary,
+    /// Social…), for the search's `category:`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
+}
+
+/// The most `References` kept in a summary (the newest ones: the thread's root comes first, and
+/// is kept too).
+pub const MAX_REFERENCES: usize = 50;
+
+/// A `References` list as a summary keeps it: the first (the thread's root) and the newest,
+/// [`MAX_REFERENCES`] at most.
+pub fn capped_references(mut refs: Vec<String>) -> Vec<String> {
+    refs.retain(|r| !r.is_empty());
+    if refs.len() > MAX_REFERENCES {
+        let tail = refs.split_off(refs.len() - (MAX_REFERENCES - 1));
+        refs.truncate(1);
+        refs.extend(tail);
+    }
+    refs
 }
 
 /// A change made while offline, or not yet confirmed by the server. Sent in order at the next
@@ -254,6 +286,17 @@ mod tests {
         sort_folders(&mut v);
         let order: Vec<_> = v.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(order, ["INBOX", "Trash", "A", "b"]);
+    }
+
+    #[test]
+    fn references_are_capped_keeping_the_root() {
+        let refs: Vec<String> = (0..80).map(|n| format!("m{n}@x")).collect();
+        let kept = capped_references(refs);
+        assert_eq!(kept.len(), MAX_REFERENCES);
+        assert_eq!(kept.first().map(String::as_str), Some("m0@x"));
+        assert_eq!(kept.last().map(String::as_str), Some("m79@x"));
+        assert_eq!(kept.get(1).map(String::as_str), Some("m31@x"));
+        assert_eq!(capped_references(vec![String::new(), "a@b".into()]), ["a@b"]);
     }
 
     #[test]

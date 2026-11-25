@@ -22,8 +22,9 @@ use mailalm_store::{FolderState, Store};
 use crate::ids::Ids;
 use crate::local::{self, sort_newest_first};
 use crate::pim_sync::{self, Memo};
-use crate::{Command, Event, Link, Start, Wake, Zones, secrets};
+use crate::{Command, Event, Link, Start, Wake, Zones, find, later, rules, secrets, unsubscribe};
 
+mod features;
 mod pim;
 
 /// How often the Inbox and the open folder are checked for new mail.
@@ -51,6 +52,7 @@ pub fn run(account: Account, start: Start) {
     };
     let mut w = Outlook {
         id: account.id,
+        name: account.name.clone(),
         address: account.address.clone(),
         store,
         events,
@@ -68,11 +70,14 @@ pub fn run(account: Account, start: Start) {
     };
     w.show_cache();
     pim_sync::show_cache(&w);
+    later::show(&w);
     w.sync_all(&commands);
+    later::tick(&mut w, &commands);
     pim_sync::sync(&mut w);
     let mut last_check = Instant::now();
     let mut last_full = Instant::now();
     let mut last_pim = Instant::now();
+    let mut last_later = Instant::now();
     while !w.stop {
         let cmd = match w.queued.pop() {
             Some(c) => Ok(c),
@@ -100,11 +105,18 @@ pub fn run(account: Account, start: Start) {
         if w.pim.dirty && !w.stop {
             pim_sync::flush(&mut w);
         }
+        // Snoozed messages and follow-ups whose time came.
+        if !w.stop && last_later.elapsed() >= later::EVERY {
+            last_later = Instant::now();
+            later::tick(&mut w, &commands);
+        }
     }
 }
 
 struct Outlook {
     id: AccountId,
+    /// The account's short name (the search's `account:`).
+    name: String,
     /// The account's address: the user, as a meeting's guest or organizer.
     address: String,
     store: Store,
@@ -180,7 +192,7 @@ impl Outlook {
             Command::Apply(change) => self.apply(change, commands),
             Command::Send(message) => self.send_message(*message, commands),
             Command::Search { id, query } => {
-                let hits = local::search(&self.store, &self.folders, &query);
+                let hits = local::search(&self.store, &self.folders, &query, (self.name.as_str(), self.address.as_str()));
                 self.emit(Event::SearchResults { account: self.id, id, hits });
             }
             Command::Reconnect => {
@@ -191,6 +203,14 @@ impl Outlook {
                 pim_sync::sync(self);
             }
             Command::Senders(_) => self.error("Microsoft's API cannot change Outlook.com's blocked senders: block a sender in Outlook.com's settings (Mail, Junk email)."),
+            Command::Rules(c) => rules::handle(self, c),
+            Command::Later(c) => later::handle(self, c, commands),
+            Command::Find { id, query, folders, server } => find::handle(self, id, &query, &folders, server),
+            Command::Unsubscribe { folder, uid, how } => {
+                if let Some(message) = unsubscribe::handle(&*self, &folder, uid, how) {
+                    self.send_message(message, commands);
+                }
+            }
             Command::Stop => self.stop = true,
         }
     }
@@ -210,7 +230,7 @@ impl Outlook {
                 Command::Open { folder, uid } => self.open(&folder, uid),
                 Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
                 Command::Search { id, query } => {
-                    let hits = local::search(&self.store, &self.folders, &query);
+                    let hits = local::search(&self.store, &self.folders, &query, (self.name.as_str(), self.address.as_str()));
                     self.emit(Event::SearchResults { account: self.id, id, hits });
                 }
                 Command::Apply(change) => self.apply_local(change),
@@ -339,24 +359,9 @@ impl Outlook {
     // ---- Sync ----
 
     fn sync_all(&mut self, commands: &Receiver<Command>) {
-        if self.connect().is_none() {
+        if !self.read_folder_list() {
             return;
         }
-        self.activity(Some("Reading the folder list…".to_owned()));
-        let mut folders = match self.call(GraphClient::folders) {
-            Ok(f) => f,
-            Err(e) => {
-                self.error(format!("The folder list could not be read: {}", describe(&e)));
-                self.activity(None);
-                return;
-            }
-        };
-        mailalm_model::sort_folders(&mut folders);
-        self.folders = folders;
-        let _ = self.store.save_folders(&self.folders);
-        let _ = self.store.forget_folders_except(&self.folders);
-        self.emit(Event::Folders { account: self.id, folders: self.folders.clone() });
-
         let mut order: Vec<Folder> = self.folders.clone();
         let viewed = self.viewed.clone();
         order.sort_by_key(|f| (f.role != FolderRole::Inbox, Some(&f.path) != viewed.as_ref()));
@@ -367,6 +372,28 @@ impl Outlook {
             self.sync_folder(&f, commands);
         }
         self.activity(None);
+    }
+
+    /// Reads the folder list again, keeps and shows it. `false` when it couldn't be read (said).
+    fn read_folder_list(&mut self) -> bool {
+        if self.connect().is_none() {
+            return false;
+        }
+        self.activity(Some("Reading the folder list…".to_owned()));
+        let mut folders = match self.call(GraphClient::folders) {
+            Ok(f) => f,
+            Err(e) => {
+                self.error(format!("The folder list could not be read: {}", describe(&e)));
+                self.activity(None);
+                return false;
+            }
+        };
+        mailalm_model::sort_folders(&mut folders);
+        self.folders = folders;
+        let _ = self.store.save_folders(&self.folders);
+        let _ = self.store.forget_folders_except(&self.folders);
+        self.emit(Event::Folders { account: self.id, folders: self.folders.clone() });
+        true
     }
 
     fn check_new(&mut self, commands: &Receiver<Command>) {
@@ -490,6 +517,9 @@ impl Outlook {
         if done_link.is_some() {
             self.prefetch(folder, &summaries, &ids, commands);
             self.flush_pending();
+            if folder.role == FolderRole::Inbox {
+                rules::run_new(self, &path);
+            }
         }
     }
 

@@ -35,12 +35,21 @@ pub(crate) fn overlay_pending(store: &Store, path: &str, summaries: &mut Vec<Sum
     }
 }
 
-/// Searches the cache of an account, newest first.
-pub(crate) fn search(store: &Store, folders: &[Folder], query: &str) -> Vec<(String, Summary)> {
+/// Searches the cache of an account, newest first. `who`: the account's name and address, which
+/// the query's `account:` terms choose by.
+pub(crate) fn search(store: &Store, folders: &[Folder], query: &str, who: (&str, &str)) -> Vec<(String, Summary)> {
     let q = Query::parse(query);
+    if !q.wants_account(who.0, who.1) {
+        return Vec::new();
+    }
+    search_parsed(store, folders, &q)
+}
+
+/// Searches these folders of the cache for a query read already, newest first.
+pub(crate) fn search_parsed(store: &Store, folders: &[Folder], q: &Query) -> Vec<(String, Summary)> {
     let mut hits = Vec::new();
     if !q.is_empty() {
-        let needs_text = q.terms.iter().any(|t| matches!(t, mailalm_model::query::Term::Text(_)));
+        let needs_text = q.needs_text();
         'folders: for f in folders {
             for s in store.summaries(&f.path) {
                 let text = if needs_text { store.text(&f.path, s.uid) } else { None };

@@ -1,5 +1,5 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/protocols/imap.rs (with `quote` from crates/net/src/protocols.rs and `days_from_civil` from crates/model/src/dates.rs). MIT OR Apache-2.0.
-// Changed: MailALM's blocking `ImapSession` over a private generic client; TLS or required STARTTLS only (PREAUTH in the clear refused); no QRESYNC, quota, IDLE or new-mail tracking.
+// Changed: MailALM's blocking `ImapSession` over a private generic client; TLS or required STARTTLS only (PREAUTH in the clear refused); no QRESYNC, quota, IDLE or new-mail tracking; `UID SEARCH` from the search box and `CREATE` (imap/search.rs, MailALM's own, phase 8).
 
 //! A small IMAP4rev1 client (RFC 3501).
 //!
@@ -20,6 +20,7 @@ mod conn;
 mod folders;
 mod messages;
 mod quotes;
+mod search;
 mod sign_in;
 mod utf7;
 use conn::Conn;
@@ -130,6 +131,19 @@ impl ImapSession {
     /// `APPEND` with flags (such as `\Seen`), for the Sent folder.
     pub fn append(&mut self, wire: &str, flags: &[&str], raw: &[u8]) -> Result<()> {
         self.client.append(wire, flags, raw)
+    }
+
+    /// `UID SEARCH` in the selected folder for what the search box's query can ask a server
+    /// (words, sender, recipients, subject, marks, dates): the UIDs found, the newest 1000.
+    /// [`NetError::Invalid`] when there is nothing in it for the server.
+    pub fn search(&mut self, query: &mailalm_model::Query) -> Result<Vec<u32>> {
+        self.client.search_query(query)
+    }
+
+    /// `CREATE` a folder (its name as the server knows it: modified UTF-7, with the server's
+    /// delimiter). A folder that is already there is the server's `NO` ([`NetError::Server`]).
+    pub fn create(&mut self, wire: &str) -> Result<()> {
+        self.client.create(wire)
     }
 
     pub fn noop(&mut self) -> Result<()> {

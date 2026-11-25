@@ -1,5 +1,5 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/exchange/graph.rs. MIT OR Apache-2.0.
-// Changed: MailALM's API (folders with their paths, delta pages, MIME, marks, moves, deletions, junk reports, sending); changes by delta query instead of listings; Graph's own links only; one kept connection; batch entries judged one by one; 410 and expired sync states as a resync; calendars, To Do and contacts in graph/pim.rs (Graph recurrences adapted from MailCraft's graph_pim.rs, the rest MailALM's own); no search, automatic replies, folder changes or imports.
+// Changed: MailALM's API (folders with their paths, delta pages, MIME, marks, moves, deletions, junk reports, sending); changes by delta query instead of listings; Graph's own links only; one kept connection; batch entries judged one by one; 410 and expired sync states as a resync; calendars, To Do and contacts in graph/pim.rs (Graph recurrences adapted from MailCraft's graph_pim.rs, the rest MailALM's own); no automatic replies, folder changes or imports; the inbox rules, `$search` and making a folder in graph/rules.rs (MailALM's own, phase 8); conversation ids and categories asked for in the delta query.
 
 //! Outlook.com mail through Microsoft Graph (v1.0), over HTTPS with an OAuth bearer token
 //! ([`crate::oauth`]): the signed-in user, the mail folders, a folder's changes by delta query,
@@ -22,6 +22,9 @@ use crate::{NetError, Result, clip};
 
 mod convert;
 mod pim;
+mod rules;
+
+pub use rules::Found;
 
 #[cfg(test)]
 mod tests;
@@ -50,8 +53,7 @@ const MAX_DELTA_PAGE: usize = 1000;
 /// Longest link (nextLink, deltaLink) followed.
 const MAX_LINK: usize = 16 << 10;
 const FOLDER_FIELDS: &str = "id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount";
-const DELTA_FIELDS: &str =
-    "id,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,isRead,flag,isDraft,hasAttachments,bodyPreview,internetMessageId";
+const DELTA_FIELDS: &str = "id,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,isRead,flag,isDraft,hasAttachments,bodyPreview,internetMessageId,conversationId,categories";
 /// Sent on every call, and inside each `$batch` entry, where the outer header doesn't count.
 const PREFER: &str = "IdType=\"ImmutableId\"";
 const PREFER_DELTA: &str = "IdType=\"ImmutableId\", odata.maxpagesize=200";

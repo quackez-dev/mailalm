@@ -13,6 +13,10 @@
 //!   by delta query, messages as MIME, marks, moves, deletions, junk reports, sending.
 //! * [`gmail::GmailClient`]: Gmail through the Gmail API over HTTPS: labels, message ids by label,
 //!   header fields, messages as MIME, label changes, the bin, sending, block and allow filters.
+//! * Phase 8: the rules on the server (Graph's inbox rules, Gmail's filters) as MailALM's rules,
+//!   the servers' search (Graph `$search`, Gmail `q`, IMAP `UID SEARCH`), making the folder or
+//!   label `MailALM/Snoozed`, and [`one_click_unsubscribe`] (RFC 8058), the only request MailALM
+//!   makes to a domain a message chose, and only on the user's confirmation.
 //! * The calendars, tasks and contacts (phase 6): [`graph::GraphClient`] for Outlook.com
 //!   (calendars and events, invitations, Teams links, Microsoft To Do, contacts) and
 //!   [`google::GoogleClient`] for a Gmail account (Google Calendar with Meet links, Google Tasks,
@@ -34,6 +38,7 @@ pub mod oauth;
 pub mod smtp;
 mod stream;
 
+pub use http::one_click_unsubscribe;
 pub use imap::{Fetched, ImapSession, Mailbox};
 
 #[derive(Debug, thiserror::Error)]

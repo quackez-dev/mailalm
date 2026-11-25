@@ -263,3 +263,39 @@ fn a_silent_server_is_a_closed_connection() {
     assert!(matches!(get(&base, 10), Err(NetError::Closed(_)) | Err(NetError::Io(_))));
     h.join().unwrap();
 }
+
+/// RFC 8058's one-click unsubscription: exactly its body, POSTed once, nothing else sent; a
+/// redirect is an error, never followed.
+#[test]
+fn one_click_unsubscription() {
+    let (base, h) = serve(vec![
+        b"HTTP/1.1 200 OK\r\nSet-Cookie: id=1\r\nContent-Length: 2\r\n\r\nok".to_vec(),
+        b"HTTP/1.1 302 Found\r\nLocation: https://elsewhere.example/\r\nContent-Length: 0\r\n\r\n".to_vec(),
+        b"HTTP/1.1 500 Oops\r\nContent-Length: 0\r\n\r\n".to_vec(),
+    ]);
+    assert_eq!(one_click_unsubscribe(&format!("{base}/u?t=abc")).unwrap(), 200);
+    assert!(matches!(one_click_unsubscribe(&format!("{base}/u")), Err(NetError::Server(m)) if m.contains("redirect")));
+    assert!(matches!(one_click_unsubscribe(&format!("{base}/u")), Err(NetError::Server(m)) if m.contains("500")));
+    let seen = h.join().unwrap();
+    assert_eq!(seen.len(), 3, "each sent once, the redirect not followed");
+    let first = &seen[0];
+    assert!(first.starts_with("POST /u?t=abc HTTP/1.1\r\n"), "{first}");
+    assert!(first.contains("Content-Type: application/x-www-form-urlencoded\r\n") && first.ends_with("\r\n\r\nList-Unsubscribe=One-Click"), "{first}");
+    let lower = first.to_ascii_lowercase();
+    assert!(!lower.contains("cookie") && !lower.contains("authorization"), "{first}");
+    // Nothing is sent to an address that isn't one.
+    assert!(matches!(one_click_unsubscribe("https://x.example/a b"), Err(NetError::Invalid(_))));
+    assert!(one_click_unsubscribe("mailto:a@b.example").is_err());
+    assert!(matches!(one_click_unsubscribe(&format!("https://x.example/{}", "a".repeat(3000))), Err(NetError::Invalid(_))));
+}
+
+/// The hosts a one-click unsubscription never goes to (outside tests).
+#[test]
+fn local_hosts() {
+    for h in ["127.0.0.1", "192.168.1.1", "::1", "localhost", "router", "printer.local", "nas.lan", "x.home.arpa", "LOCALHOST."] {
+        assert!(local_host(h), "{h}");
+    }
+    for h in ["lists.example.com", "click.mailer.example"] {
+        assert!(!local_host(h), "{h}");
+    }
+}

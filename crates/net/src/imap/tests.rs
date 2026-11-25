@@ -510,3 +510,21 @@ fn a_message_comes_whole_or_not_at_all() {
     let mut c = Client::from_stream(Script::new(s.as_bytes())).unwrap();
     assert!(matches!(c.fetch_message(9), Err(NetError::TooLarge(_))));
 }
+
+/// The server's search: a word outside ASCII goes as a literal once the server says go on, in
+/// UTF-8; and a folder made for MailALM (one already there is the server's `NO`).
+#[test]
+fn search_and_create() {
+    let server = "* OK hi\r\n+ go on\r\n* SEARCH 3 9 12\r\nM1 OK done\r\nM2 OK created\r\nM3 NO it is there already\r\n";
+    let mut c = Client::from_stream(Script::new(server.as_bytes())).unwrap();
+    let found = c.search_query(&mailalm_model::Query::parse("subject:réunion from:zoe has:attachment")).unwrap();
+    assert_eq!(found, vec![3, 9, 12]);
+    c.create("INBOX.MailALM.Snoozed").unwrap();
+    assert!(matches!(c.create("MailALM/Snoozed"), Err(NetError::Server(_))));
+    assert!(matches!(c.create("a\r\nb"), Err(NetError::Invalid(_))));
+    assert!(matches!(c.search_query(&mailalm_model::Query::parse("has:attachment")), Err(NetError::Invalid(_))));
+    assert_eq!(
+        sent(c),
+        "M1 UID SEARCH CHARSET UTF-8 SUBJECT {8}\r\nréunion FROM \"zoe\"\r\nM2 CREATE \"INBOX.MailALM.Snoozed\"\r\nM3 CREATE \"MailALM/Snoozed\"\r\n"
+    );
+}

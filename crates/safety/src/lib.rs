@@ -23,7 +23,7 @@ mod content;
 pub mod files;
 mod names;
 
-pub use auth::{Authentication, Check, Verdict, authentication};
+pub use auth::{Authentication, Check, DmarcAlert, Verdict, authentication, dmarc_alert};
 pub use content::{App, ArchiveInfo, ImageFormat, Macros, OfficeFormat, OfficeInfo, ProgramKind, RealType, TextKind, detect};
 pub use names::{ExtClass, ext_class, extension, has_hidden_characters};
 

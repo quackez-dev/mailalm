@@ -13,6 +13,13 @@
 //! demand; an IMAP account has a calendar and a task list kept on this computer, and sends and
 //! answers invitations by mail (iMIP). What the interface works out from every account's cache
 //! (reminders, clashes, addresses to suggest) is in [`agenda`].
+//!
+//! Phase 8 adds, for every kind of account:
+//! - the rules ([`RuleCommand`]): the server's (Outlook's inbox rules, Gmail's filters) and
+//!   MailALM's own, which the worker runs on new mail in the Inbox; a preview over the cache;
+//! - snoozed messages and follow-ups ([`LaterCommand`]), checked every minute and at start;
+//! - the search with its folders ([`Command::Find`]), and the server's search beside the cache's;
+//! - leaving a mailing list ([`Command::Unsubscribe`]), only on the user's confirmation.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -23,18 +30,25 @@ use std::thread::JoinHandle;
 use mailalm_mime::{AttachmentData, Outgoing, OutgoingAttachment, Parsed};
 use mailalm_model::pim::ical::{Invitation, Method};
 use mailalm_model::pim::{Calendar, Contact, Event as CalendarEvent, Response, Task, TaskList, ZoneRules};
-use mailalm_model::{Account, AccountId, Change, Folder, Provider, Summary};
+use mailalm_model::later::{FollowUp, Mark, Snoozed};
+use mailalm_model::rules::{Rule, Where};
+use mailalm_model::{Account, AccountId, Change, Folder, FolderScope, Provider, Summary};
 use mailalm_safety::Report;
 
 pub mod agenda;
+mod find;
 mod gmail;
 mod ids;
 mod itip;
+mod later;
 mod local;
+mod mail_worker;
 mod outlook;
 mod pim_sync;
+mod rules;
 pub mod secrets;
 mod signin;
+mod unsubscribe;
 mod worker;
 
 pub use local::is_calendar_part;
@@ -100,7 +114,63 @@ pub enum Command {
     Senders(SenderCommand),
     /// Calendars, tasks, contacts, invitations.
     Pim(PimCommand),
+    /// The account's rules: the server's and MailALM's own.
+    Rules(RuleCommand),
+    /// Snoozed messages and follow-ups.
+    Later(LaterCommand),
+    /// Searches the cache in these folders (`account:` terms decide whether this account is
+    /// searched at all): the answer is [`Event::SearchResults`] with `id`. With `server`, the
+    /// server is asked too, and its messages come in [`Event::ServerResults`] with `id`.
+    Find { id: u64, query: String, folders: FolderScope, server: bool },
+    /// Leaves the mailing list a message came from, as its `List-Unsubscribe` says (read again
+    /// from the cached message, never from the interface). **Only sent after the user confirmed
+    /// it**, having seen the domain (`mailalm_mime::Unsubscribe`): the one-click POST contacts a
+    /// domain the sender chose. A web page is opened by the interface, not here.
+    Unsubscribe { folder: String, uid: u32, how: UnsubscribeHow },
     Stop,
+}
+
+/// What is asked about an account's rules (C5). Every change ends with [`Event::Rules`].
+#[derive(Debug)]
+pub enum RuleCommand {
+    /// Lists them: the server's (Outlook, Gmail; read again now) then MailALM's own.
+    List,
+    /// Saves a rule, new (no id) or changed, where it says it runs (`rule.place`). It is checked
+    /// first ([`Rule::check`]); a forwarding must carry `forward_confirmed`, set by the interface
+    /// when the user confirmed it.
+    Save(Box<Rule>),
+    /// Deletes the rule with this id, where it is.
+    Delete { id: String, place: Where },
+    /// The cached messages the rule would touch, in these folders (the Inbox, usually: rules act
+    /// on mail arriving there): [`Event::RulePreview`] with `id`.
+    Preview { id: u64, rule: Box<Rule>, folders: FolderScope },
+}
+
+/// What is asked about snoozed messages and follow-ups (C2). Every change ends with
+/// [`Event::Later`].
+#[derive(Debug)]
+pub enum LaterCommand {
+    /// Lists them.
+    List,
+    /// Moves the message to `MailALM/Snoozed` (made on the server the first time) until `until`
+    /// (UTC seconds), when it comes back to the Inbox, unread.
+    Snooze { folder: String, uid: u32, until: i64 },
+    /// Brings a snoozed message back to the Inbox now.
+    Wake(Box<Mark>),
+    /// A reminder at `by` (UTC seconds) if no answer came in the message's thread by then:
+    /// [`Event::FollowUpDue`].
+    FollowUp { folder: String, uid: u32, by: i64 },
+    /// Forgets a follow-up (its reminder dismissed, or not wanted any more).
+    Dismiss(Box<Mark>),
+}
+
+/// How to leave a mailing list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnsubscribeHow {
+    /// RFC 8058's one-click POST to the list's https address.
+    OneClick,
+    /// The message the list's `mailto:` address asks for, sent from the account.
+    Mail,
 }
 
 /// What is asked about the senders an account blocks or allows on its server.
@@ -183,6 +253,18 @@ pub enum Event {
     Invitation { account: AccountId, folder: String, uid: u32, index: usize, result: Result<Box<Invitation>, String> },
     /// Something done that the user should hear of ("The answer was sent to Zoe").
     Notice { account: AccountId, text: String },
+    /// The account's rules: the server's (when it could be read) then MailALM's own.
+    Rules { account: AccountId, rules: Vec<Rule> },
+    /// The cached messages a rule would touch ([`RuleCommand::Preview`]), newest first.
+    RulePreview { account: AccountId, id: u64, hits: Vec<(String, Summary)> },
+    /// The account's snoozed messages and follow-ups.
+    Later { account: AccountId, snoozed: Vec<Snoozed>, follow_ups: Vec<FollowUp> },
+    /// No answer came in a followed message's thread by its date: the reminder to show. It stays
+    /// (and isn't given again) until [`LaterCommand::Dismiss`].
+    FollowUpDue { account: AccountId, follow_up: Box<FollowUp> },
+    /// What the server's search found ([`Command::Find`] with `server`), "from the server",
+    /// newest first; or why it couldn't search.
+    ServerResults { account: AccountId, id: u64, result: Result<Vec<(String, Summary)>, String> },
 }
 
 /// An attachment decoded for its review, and what MailALM found about it.
@@ -246,7 +328,12 @@ impl Event {
             | Event::Tasks { account, .. }
             | Event::Contacts { account, .. }
             | Event::Invitation { account, .. }
-            | Event::Notice { account, .. } => *account,
+            | Event::Notice { account, .. }
+            | Event::Rules { account, .. }
+            | Event::RulePreview { account, .. }
+            | Event::Later { account, .. }
+            | Event::FollowUpDue { account, .. }
+            | Event::ServerResults { account, .. } => *account,
         }
     }
 }

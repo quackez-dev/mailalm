@@ -13,6 +13,9 @@
 //!   f-<key>/<uid>.eml         a message, as the server sent it
 //!   f-<key>/<uid>.txt         its text, for the search
 //!   pim/                      calendars, events, tasks, contacts and their changes ([`pim`])
+//!   rules.json                MailALM's own rules of the account, in order
+//!   rules-mark.json           the newest Inbox message those rules have seen
+//!   later.json                snoozed messages and follow-ups
 //! ```
 //!
 //! `<key>` is a hash of the folder's path, so no name sent by a server ever becomes a file name.
@@ -24,6 +27,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use mailalm_model::later::Later;
+use mailalm_model::rules::Rule;
 use mailalm_model::{AccountId, Change, Folder, Summary};
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
@@ -42,6 +47,15 @@ pub struct FolderState {
     /// then the next local number to give a message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delta: Option<String>,
+}
+
+/// Where MailALM's own rules stand in the Inbox: the newest message they have seen (its number).
+/// Messages with a higher one are new to them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesMark {
+    /// The Inbox's path when it was set (another Inbox starts over).
+    pub inbox: String,
+    pub uid: u32,
 }
 
 /// One account's cache.
@@ -221,6 +235,33 @@ impl Store {
     pub fn save_pending(&self, changes: &[Change]) -> io::Result<()> {
         write_json(&self.root.join("pending.json"), &changes)
     }
+
+    /// MailALM's own rules of the account, in the order they run.
+    pub fn rules(&self) -> Vec<Rule> {
+        read_json(&self.root.join("rules.json")).unwrap_or_default()
+    }
+
+    pub fn save_rules(&self, rules: &[Rule]) -> io::Result<()> {
+        write_json(&self.root.join("rules.json"), &rules)
+    }
+
+    /// Where MailALM's own rules stand in the Inbox; `None` before they first ran.
+    pub fn rules_mark(&self) -> Option<RulesMark> {
+        read_json(&self.root.join("rules-mark.json"))
+    }
+
+    pub fn save_rules_mark(&self, mark: &RulesMark) -> io::Result<()> {
+        write_json(&self.root.join("rules-mark.json"), mark)
+    }
+
+    /// The snoozed messages and the follow-ups.
+    pub fn later(&self) -> Later {
+        read_json(&self.root.join("later.json")).unwrap_or_default()
+    }
+
+    pub fn save_later(&self, later: &Later) -> io::Result<()> {
+        write_json(&self.root.join("later.json"), later)
+    }
 }
 
 /// The name of a folder's cache directory: `f-` and a hash of its path (FNV-1a, 64 bits). Stable
@@ -307,6 +348,35 @@ mod tests {
 
         s.delete_all().expect("delete");
         assert!(!base.join("3").exists());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Rules, where they stand, snoozed messages and follow-ups are kept; a cache written before
+    /// summaries had their thread reads as it was.
+    #[test]
+    fn rules_and_later_are_kept() {
+        use mailalm_model::later::{Mark, Snoozed};
+        use mailalm_model::rules::{Action, Condition, Where};
+        let base = temp("rules-later");
+        let s = Store::open(&base, AccountId(5)).expect("open");
+        assert!(s.rules().is_empty() && s.rules_mark().is_none() && s.later() == Later::default());
+        let rule = Rule::new("News", Where::Local, vec![Condition::From(vec!["news@".into()])], vec![Action::MarkRead]);
+        s.save_rules(std::slice::from_ref(&rule)).expect("rules");
+        assert_eq!(s.rules(), vec![rule]);
+        let mark = RulesMark { inbox: "INBOX".into(), uid: 42 };
+        s.save_rules_mark(&mark).expect("mark");
+        assert_eq!(s.rules_mark(), Some(mark));
+        let mut later = Later::default();
+        later.snooze(Snoozed { mark: Mark { message_id: "m@x".into(), ..Mark::default() }, until: 10, since: 1 });
+        s.save_later(&later).expect("later");
+        assert_eq!(s.later(), later);
+
+        let old = r#"[{"uid":3,"from":{"name":"","address":"a@b"},"to":[],"cc":[],"subject":"s","date":1,"flags":{"seen":true,"flagged":false,"answered":false,"draft":false},"size":0,"has_attachments":false,"preview":"","message_id":"m@x"}]"#;
+        fs::create_dir_all(s.root().join(dir_name("INBOX"))).expect("dir");
+        fs::write(s.root().join(dir_name("INBOX")).join("index.json"), old).expect("old index");
+        let read = s.summaries("INBOX");
+        assert_eq!(read.len(), 1);
+        assert!(read[0].in_reply_to.is_empty() && read[0].references.is_empty() && read[0].thread.is_empty() && read[0].categories.is_empty());
         let _ = fs::remove_dir_all(&base);
     }
 

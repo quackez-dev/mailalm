@@ -91,6 +91,20 @@ fn a_header_block_makes_a_summary() {
     assert_eq!(m.date, 99);
 }
 
+/// The thread's ids, for the follow-ups: from the header block, else from the whole message.
+#[test]
+fn summaries_keep_the_thread() {
+    let header = b"From: zoe@studio.example\r\nMessage-ID: <r2@studio.example>\r\nIn-Reply-To: <q1@example.com>\r\nReferences: <root@x> <q1@example.com>\r\n\r\n";
+    let s = summary_from_header(1, header, Flags::default(), 1, None);
+    assert_eq!(s.in_reply_to, "q1@example.com");
+    assert_eq!(s.references, ["root@x", "q1@example.com"]);
+    let p = parse(header).expect("a message");
+    assert_eq!(p.in_reply_to, "q1@example.com");
+    let mut bare = Summary::default();
+    complete_summary(&mut bare, &p);
+    assert_eq!((bare.in_reply_to.as_str(), bare.references.len()), ("q1@example.com", 2));
+}
+
 #[test]
 fn header_text_is_cleaned() {
     assert_eq!(clean_line("  Invoice\u{202e}fdp.exe \r\n\t paid "), "Invoicefdp.exe paid");
