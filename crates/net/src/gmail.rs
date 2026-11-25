@@ -118,7 +118,7 @@ impl std::fmt::Debug for GmailClient {
 /// A busy answer: the request was turned away before anything was done (throttled, unavailable),
 /// or failed on the way (it may have been done).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Busy {
+pub(crate) enum Busy {
     TurnedAway,
     Failed,
 }
@@ -454,7 +454,7 @@ fn json_of(resp: &Response) -> Result<Value> {
 
 /// Whether the answer says Gmail is busy, and how: throttled (429, or 403 with a rate-limit
 /// reason) or unavailable (503) turned the request away; another 5xx failed on the way.
-fn busy(resp: &Response) -> Option<Busy> {
+pub(crate) fn busy(resp: &Response) -> Option<Busy> {
     match resp.status {
         429 | 503 => Some(Busy::TurnedAway),
         403 if rate_limited(serde_json::from_slice::<Value>(&resp.body).ok().as_ref()) => Some(Busy::TurnedAway),
@@ -464,7 +464,7 @@ fn busy(resp: &Response) -> Option<Busy> {
 }
 
 /// Whether a Google error names a rate limit as its reason (Gmail says so with a 403 too).
-fn rate_limited(body: Option<&Value>) -> bool {
+pub(crate) fn rate_limited(body: Option<&Value>) -> bool {
     body.and_then(|v| v.get("error"))
         .and_then(|e| e.get("errors"))
         .and_then(Value::as_array)
@@ -484,7 +484,7 @@ fn check(resp: &Response) -> Result<()> {
 }
 
 /// What Google's error says: its message, else its status, else its first reason; clipped.
-fn error_detail(body: Option<&Value>) -> String {
+pub(crate) fn error_detail(body: Option<&Value>) -> String {
     let error = body.and_then(|v| v.get("error"));
     let text = |k: &str| error.and_then(|e| e.get(k)).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
     let reason = || {
@@ -509,7 +509,7 @@ fn status_error(status: u16, body: Option<&Value>) -> Result<()> {
 
 /// Seconds to wait before attempt `round + 1`: a `Retry-After` in seconds if there is one, else
 /// 2 s per round so far; between 1 and [`BUSY_WAIT_CAP`].
-fn backoff_secs(hint: Option<&str>, round: u32) -> u64 {
+pub(crate) fn backoff_secs(hint: Option<&str>, round: u32) -> u64 {
     let fallback = 2 * u64::from(round.max(1));
     hint.and_then(|h| h.trim().parse().ok()).unwrap_or(fallback).clamp(1, BUSY_WAIT_CAP)
 }

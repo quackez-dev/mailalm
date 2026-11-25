@@ -1,10 +1,10 @@
 // Adapted from MailCraft (https://github.com/ZIDAN44/mailcraft), commit c3510d13, crates/net/src/exchange/graph.rs. MIT OR Apache-2.0.
-// Changed: MailALM's API (folders with their paths, delta pages, MIME, marks, moves, deletions, junk reports, sending); changes by delta query instead of listings; Graph's own links only; one kept connection; batch entries judged one by one; 410 and expired sync states as a resync; no calendars, contacts, search, automatic replies, folder changes or imports.
+// Changed: MailALM's API (folders with their paths, delta pages, MIME, marks, moves, deletions, junk reports, sending); changes by delta query instead of listings; Graph's own links only; one kept connection; batch entries judged one by one; 410 and expired sync states as a resync; calendars, To Do and contacts in graph/pim.rs (Graph recurrences adapted from MailCraft's graph_pim.rs, the rest MailALM's own); no search, automatic replies, folder changes or imports.
 
 //! Outlook.com mail through Microsoft Graph (v1.0), over HTTPS with an OAuth bearer token
 //! ([`crate::oauth`]): the signed-in user, the mail folders, a folder's changes by delta query,
 //! a message's MIME source, marks (read, flagged), moves, deletions, junk reports, and sending a
-//! MIME message.
+//! MIME message; and the calendars, Microsoft To Do and the contacts (`pim.rs`).
 //!
 //! Ids are asked for in their immutable form (`Prefer: IdType="ImmutableId"`), so a message keeps
 //! its id when it moves. Several small changes go as one `$batch`. Everything Graph sends is
@@ -21,6 +21,7 @@ use crate::http::{self, Agent, Request, Response};
 use crate::{NetError, Result, clip};
 
 mod convert;
+mod pim;
 
 #[cfg(test)]
 mod tests;
@@ -431,10 +432,15 @@ impl GraphClient {
 
     /// Every item of a listing, following its nextLinks (to Graph only), at most `limit`.
     fn all(&mut self, first: &str, limit: usize) -> Result<Vec<Value>> {
+        self.all_with(first, limit, PREFER)
+    }
+
+    /// [`GraphClient::all`], each page asked for with this `Prefer` header.
+    fn all_with(&mut self, first: &str, limit: usize, prefer: &str) -> Result<Vec<Value>> {
         let mut out = Vec::new();
         let mut url = first.to_string();
         for _ in 0..MAX_PAGES {
-            let v = self.get_json(&url)?;
+            let v = self.get_json_with(&url, prefer)?;
             let items = v.get("value").and_then(Value::as_array).ok_or_else(|| NetError::Protocol("a Graph listing without its list".into()))?;
             out.extend(items.iter().take(limit.saturating_sub(out.len())).cloned());
             if out.len() >= limit {
@@ -450,7 +456,11 @@ impl GraphClient {
     }
 
     fn get_json(&mut self, url: &str) -> Result<Value> {
-        let resp = self.call(Request::get(url, MAX_JSON), "application/json", PREFER)?;
+        self.get_json_with(url, PREFER)
+    }
+
+    fn get_json_with(&mut self, url: &str, prefer: &str) -> Result<Value> {
+        let resp = self.call(Request::get(url, MAX_JSON), "application/json", prefer)?;
         check(&resp).map_err(|e| self.hide(e))?;
         json_of(&resp)
     }

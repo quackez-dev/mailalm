@@ -1,6 +1,6 @@
 [package]
 name = "mailalm-net"
-description = "MailALM network layer: blocking IMAP client, SMTP submission, Microsoft and Google sign-in (OAuth 2.0 with PKCE), Microsoft Graph and Gmail API mail over HTTPS, always over verified TLS (adapted from MailCraft)"
+description = "MailALM network layer: blocking IMAP client, SMTP submission, Microsoft and Google sign-in (OAuth 2.0 with PKCE), Microsoft Graph and Gmail API mail, Graph and Google calendars, tasks and contacts over HTTPS, always over verified TLS (adapted from MailCraft)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

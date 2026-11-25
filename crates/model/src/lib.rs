@@ -1,4 +1,5 @@
-//! MailALM data model: accounts, providers and the rules of the workspace.
+//! MailALM data model: accounts, providers and the rules of the workspace; calendars, events,
+//! tasks and contacts, and meeting messages ([`pim`]).
 //!
 //! Pure Rust, no I/O (serde only): the desktop app, the network layer, the cache, the MCP server and
 //! the tests share it.
@@ -9,8 +10,10 @@
 //!   so the user always chooses;
 //! - the unified view exists only when more than one account is configured;
 //! - a search covers the focused account by default, every account in the unified view.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod mail;
+pub mod pim;
 pub mod query;
 
 pub use mail::{Change, Flags, Folder, FolderRole, Person, Security, Server, Summary, sort_folders};

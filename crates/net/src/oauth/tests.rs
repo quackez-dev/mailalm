@@ -62,6 +62,28 @@ fn microsoft_needs_a_client_id() {
     assert_eq!(p.client_id, "0000-id");
     assert!(p.auth_url.starts_with("https://login.microsoftonline.com/consumers/") && p.token_url.ends_with("/oauth2/v2.0/token"));
     assert!(p.scope.contains("Mail.ReadWrite") && p.scope.ends_with("offline_access"));
+    // Phase 6: the calendars, To Do and the contacts, delegated, by their full names.
+    let scopes: Vec<&str> = p.scope.split_whitespace().collect();
+    for s in ["Calendars.ReadWrite", "Tasks.ReadWrite", "Contacts.ReadWrite"] {
+        assert!(scopes.contains(&format!("https://graph.microsoft.com/{s}").as_str()), "{s}");
+    }
+    assert_eq!(scopes.len(), 8, "{scopes:?}");
+}
+
+/// Google: mail, filters, the calendars, the tasks, and the contacts read only.
+#[test]
+fn google_scope_names_each_api() {
+    let scopes: Vec<&str> = GOOGLE_SCOPE.split_whitespace().collect();
+    assert_eq!(
+        scopes,
+        [
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.settings.basic",
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/tasks",
+            "https://www.googleapis.com/auth/contacts.readonly",
+        ]
+    );
 }
 
 /// Who signed in, from an ID token's claims.
