@@ -94,6 +94,7 @@ impl Compose {
             references: self.references.clone(),
             attachments: self.attachments.clone(),
             calendar: None,
+            html: None,
         })
     }
 

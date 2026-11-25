@@ -391,7 +391,7 @@ mailalm/
 ├── crates/store/          ← cache local, index de recherche, file hors ligne
 ├── crates/net/            ← workers par compte : imap, smtp, graph, gmail, gcal, gtasks, people, caldav, oauth
 ├── crates/engine/         ← session, registre de commandes (partagé par l'UI et le MCP), règles
-├── crates/compose/        ← éditeur sur WordCraft doc/layout, export HTML
+├── crates/compose/        ← éditeur riche de MailALM (egui), export HTML
 ├── crates/antidote/       ← pont WebSocket local vers Antidote
 ├── crates/safety/         ← pièces jointes (type réel, approbation), liens, alertes
 ├── crates/porting/        ← import et export : eml, mbox, PDF, PST, eM Client

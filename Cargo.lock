@@ -2315,6 +2315,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mailalm-compose"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "html5ever",
+ "image",
+ "mailalm-mime",
+]
+
+[[package]]
 name = "mailalm-engine"
 version = "0.1.0"
 dependencies = [

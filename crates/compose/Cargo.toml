@@ -1,0 +1,21 @@
+[package]
+name = "mailalm-compose"
+description = "MailALM's rich-text editor: the document model and its edits with undo (pure, tested), the egui widget and its toolbar, the HTML sent with its plain-text alternative, the import of untrusted HTML, and the text access a corrector (Antidote) needs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The HTML body and its pictures go to the MIME writer as `mailalm_mime::HtmlBody`.
+mailalm-mime = { workspace = true }
+# The widget (storytold's fork, as the app uses it).
+egui = { workspace = true }
+# The pictures shown in the editor: PNG, JPEG and GIF, decoded with size limits.
+image = { workspace = true }
+# HTML import: only the tokenizer (html2text already builds it); the tree is rebuilt here.
+html5ever = { workspace = true }

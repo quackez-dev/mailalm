@@ -17,6 +17,7 @@ mailalm-store = { path = "crates/store" }
 mailalm-engine = { path = "crates/engine" }
 mailalm-safety = { path = "crates/safety" }
 mailalm-antidote = { path = "crates/antidote" }
+mailalm-compose = { path = "crates/compose" }
 
 # Every crate below is at the version, and with the features, MailCraft v0.41.0 uses: audited there
 # (audits/mailcraft), and the Cargo.lock is checked against that one (audits/mailalm/README.md).
@@ -27,6 +28,8 @@ thiserror = "2"
 mail-parser = { version = "1.0.1", features = ["full_encoding"] }
 mail-builder = { version = "2", default-features = false }
 html2text = { version = "0.17", features = ["css"] }
+# HTML import in the editor (crates/compose): the tokenizer of the html5ever html2text already uses.
+html5ever = "0.40"
 # Network: IMAP responses (imap-proto), SMTP (lettre), TLS (rustls with ring).
 imap-proto = "0.17"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls", "ring", "webpki-roots"] }
