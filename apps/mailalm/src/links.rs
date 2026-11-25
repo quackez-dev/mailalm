@@ -4,6 +4,8 @@
 //! Latin ones), and a link whose text names another domain than the one it goes to. Only `http`,
 //! `https` and `mailto` links get here (the editor's model keeps no other). Pure, tested.
 
+use crate::i18n::{tr, trf};
+
 /// What opening a link does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Opens {
@@ -34,41 +36,38 @@ const MAX_URL: usize = 4096;
 pub fn check(target: &str, text: &str) -> LinkCheck {
     let target = target.trim();
     if target.len() > MAX_URL {
-        return LinkCheck { warnings: vec!["The link's address is too long to be checked: it is not opened.".to_owned()], ..LinkCheck::default() };
+        return LinkCheck { warnings: vec![tr("The link's address is too long to be checked: it is not opened.").to_owned()], ..LinkCheck::default() };
     }
     let lower = target.get(..8).unwrap_or(target).to_ascii_lowercase();
     if lower.starts_with("mailto:") {
         return check_mailto(target, text);
     }
     let Some((https, rest)) = strip_ci(target, "https://").map(|r| (true, r)).or_else(|| strip_ci(target, "http://").map(|r| (false, r))) else {
-        return LinkCheck { warnings: vec!["Only http, https and mailto links are opened.".to_owned()], ..LinkCheck::default() };
+        return LinkCheck { warnings: vec![tr("Only http, https and mailto links are opened.").to_owned()], ..LinkCheck::default() };
     };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let mut warnings = Vec::new();
     let host_port = match authority.rsplit_once('@') {
         Some((user, host)) => {
-            warnings.push(format!(
-                "The address starts with \"{}@\", which is not where it goes: the real site is the name after the @.",
-                clip(user, 60)
-            ));
+            warnings.push(trf!("The address starts with \"{user}@\", which is not where it goes: the real site is the name after the @.", user = clip(user, 60)));
             host
         }
         None => authority,
     };
     let host = host_of(host_port);
     let Some(site) = examine_host(&host, &mut warnings) else {
-        return LinkCheck { warnings: vec!["The link has no site name: it is not opened.".to_owned()], ..LinkCheck::default() };
+        return LinkCheck { warnings: vec![tr("The link has no site name: it is not opened.").to_owned()], ..LinkCheck::default() };
     };
     if !https {
-        warnings.push("The link is plain http: the page and what you type there are not protected.".to_owned());
+        warnings.push(tr("The link is plain http: the page and what you type there are not protected.").to_owned());
     }
     if let Some(shown) = text_domain(text) {
         let shown_ascii = ascii_host(&shown).unwrap_or_else(|| shown.clone());
         if registrable(&shown_ascii) != registrable(&site.ascii) {
-            warnings.push(format!("The link's text shows {shown}, but it goes to {}.", site.ascii));
+            warnings.push(trf!("The link's text shows {shown}, but it goes to {site}.", shown = shown, site = site.ascii));
         }
     } else if let Some(address) = text_address(text) {
-        warnings.push(format!("The link's text shows the address {address}, but it opens the web site {}.", site.ascii));
+        warnings.push(trf!("The link's text shows the address {address}, but it opens the web site {site}.", address = address, site = site.ascii));
     }
     LinkCheck { opens: Some(Opens::Web(target.to_owned())), domain: site.ascii, unicode: site.unicode, warnings }
 }
@@ -76,7 +75,7 @@ pub fn check(target: &str, text: &str) -> LinkCheck {
 /// A `mailto:` link: the address it writes to, and whether its text shows another.
 fn check_mailto(target: &str, text: &str) -> LinkCheck {
     let Some((to, subject, body)) = parse_mailto(target) else {
-        return LinkCheck { warnings: vec!["This mail link has no valid address: it is not opened.".to_owned()], ..LinkCheck::default() };
+        return LinkCheck { warnings: vec![tr("This mail link has no valid address: it is not opened.").to_owned()], ..LinkCheck::default() };
     };
     let mut warnings = Vec::new();
     let domain_raw = to.rsplit_once('@').map(|(_, d)| d.to_owned()).unwrap_or_default();
@@ -84,12 +83,12 @@ fn check_mailto(target: &str, text: &str) -> LinkCheck {
     let domain = site.as_ref().map_or_else(|| domain_raw.to_ascii_lowercase(), |s| s.ascii.clone());
     if let Some(address) = text_address(text) {
         if !address.eq_ignore_ascii_case(&to) {
-            warnings.push(format!("The link's text shows {address}, but the message would go to {to}."));
+            warnings.push(trf!("The link's text shows {address}, but the message would go to {to}.", address = address, to = to));
         }
     } else if let Some(shown) = text_domain(text) {
         let shown_ascii = ascii_host(&shown).unwrap_or_else(|| shown.clone());
         if registrable(&shown_ascii) != registrable(&domain) {
-            warnings.push(format!("The link's text shows {shown}, but the message would go to {to}."));
+            warnings.push(trf!("The link's text shows {shown}, but the message would go to {to}.", shown = shown, to = to));
         }
     }
     LinkCheck { opens: Some(Opens::Mail { to, subject, body }), domain, unicode: site.and_then(|s| s.unicode), warnings }
@@ -172,29 +171,29 @@ fn examine_host(host: &str, warnings: &mut Vec<String>) -> Option<Site> {
         return None;
     }
     if host.parse::<std::net::IpAddr>().is_ok() || (host.contains(':') && !host.contains('.')) {
-        warnings.push(format!("The link goes to an IP address ({host}), not to a named site."));
+        warnings.push(trf!("The link goes to an IP address ({host}), not to a named site.", host = host));
         return Some(Site { ascii: host.to_owned(), unicode: None });
     }
     if host.chars().any(|c| c.is_control() || c.is_whitespace() || is_invisible(c)) {
-        warnings.push("The site's name holds invisible characters.".to_owned());
+        warnings.push(tr("The site's name holds invisible characters.").to_owned());
     }
     if host.chars().any(|c| ('\u{ff00}'..='\u{ffef}').contains(&c)) {
-        warnings.push("The site's name is written in wide (full-width) characters.".to_owned());
+        warnings.push(tr("The site's name is written in wide (full-width) characters.").to_owned());
     }
     let unicode = unicode_host(host);
     let ascii = ascii_host(&unicode).unwrap_or_else(|| host.to_owned());
     let international = !unicode.is_ascii();
     if international {
-        warnings.push(format!("The site's name uses international letters ({unicode}): MailALM shows it as {ascii}."));
+        warnings.push(trf!("The site's name uses international letters ({unicode}): MailALM shows it as {ascii}.", unicode = unicode, ascii = ascii));
     }
     for label in unicode.split('.') {
         match look_alike(label) {
             LookAlike::None => {}
             LookAlike::Mixed(scripts) => {
-                warnings.push(format!("The site's name mixes alphabets ({scripts}) in \"{label}\": it may imitate another site's name."));
+                warnings.push(trf!("The site's name mixes alphabets ({scripts}) in \"{label}\": it may imitate another site's name.", scripts = scripts, label = label));
             }
             LookAlike::Imitates(latin) => {
-                warnings.push(format!("\"{label}\" is written with letters that look like Latin ones: it looks like \"{latin}\", but it is another name."));
+                warnings.push(trf!("\"{label}\" is written with letters that look like Latin ones: it looks like \"{latin}\", but it is another name.", label = label, latin = latin));
             }
         }
     }
@@ -229,10 +228,10 @@ fn script_of(c: char) -> Option<Script> {
 
 fn script_name(s: Script) -> &'static str {
     match s {
-        Script::Latin => "Latin",
-        Script::Cyrillic => "Cyrillic",
-        Script::Greek => "Greek",
-        Script::Other => "other",
+        Script::Latin => tr("Latin"),
+        Script::Cyrillic => tr("Cyrillic"),
+        Script::Greek => tr("Greek"),
+        Script::Other => tr("other"),
     }
 }
 
@@ -300,7 +299,7 @@ fn look_alike(label: &str) -> LookAlike {
     }
     if scripts.len() > 1 {
         let names: Vec<&str> = scripts.iter().map(|s| script_name(*s)).collect();
-        return LookAlike::Mixed(names.join(" and "));
+        return LookAlike::Mixed(names.join(tr(" and ")));
     }
     if scripts.first().is_some_and(|s| matches!(s, Script::Cyrillic | Script::Greek)) {
         let twins: Option<String> = label.chars().map(|c| if script_of(c).is_some() { latin_twin(c) } else { Some(c) }).collect();

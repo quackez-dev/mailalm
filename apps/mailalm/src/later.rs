@@ -2,6 +2,7 @@
 //! here. Pure: times are wall-clock seconds here ("local", as if UTC); the interface turns them
 //! into UTC instants with `time::utc_of_local`.
 
+use crate::i18n::tr;
 use crate::time::weekday_index;
 
 /// One choice of a menu: its label and its time (local).
@@ -25,13 +26,13 @@ pub fn snooze_presets(now: i64) -> Vec<Preset> {
     let mut out = Vec::new();
     let later = (now + 3 * HOUR).div_euclid(HOUR) * HOUR + if (now + 3 * HOUR).rem_euclid(HOUR) == 0 { 0 } else { HOUR };
     if later - day * DAY <= LATEST_TODAY {
-        out.push(Preset { label: "Later today", local: later });
+        out.push(Preset { label: tr("Later today"), local: later });
     }
-    out.push(Preset { label: "Tomorrow morning", local: (day + 1) * DAY + 8 * HOUR });
+    out.push(Preset { label: tr("Tomorrow morning"), local: (day + 1) * DAY + 8 * HOUR });
     if weekday < 5 {
-        out.push(Preset { label: "This weekend", local: (day + 5 - weekday) * DAY + 9 * HOUR });
+        out.push(Preset { label: tr("This weekend"), local: (day + 5 - weekday) * DAY + 9 * HOUR });
     }
-    out.push(Preset { label: "Next week", local: (day + 7 - weekday) * DAY + 8 * HOUR });
+    out.push(Preset { label: tr("Next week"), local: (day + 7 - weekday) * DAY + 8 * HOUR });
     out
 }
 
@@ -40,9 +41,9 @@ pub fn snooze_presets(now: i64) -> Vec<Preset> {
 pub fn follow_up_presets(now: i64) -> Vec<Preset> {
     let day = now.div_euclid(DAY);
     vec![
-        Preset { label: "Tomorrow", local: (day + 1) * DAY + 9 * HOUR },
-        Preset { label: "In 3 days", local: (day + 3) * DAY + 9 * HOUR },
-        Preset { label: "In a week", local: (day + 7) * DAY + 9 * HOUR },
+        Preset { label: tr("Tomorrow"), local: (day + 1) * DAY + 9 * HOUR },
+        Preset { label: tr("In 3 days"), local: (day + 3) * DAY + 9 * HOUR },
+        Preset { label: tr("In a week"), local: (day + 7) * DAY + 9 * HOUR },
     ]
 }
 

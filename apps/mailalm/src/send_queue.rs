@@ -14,6 +14,8 @@ use mailalm_mime::{HtmlBody, InlineImage, Outgoing, OutgoingAttachment};
 use mailalm_model::{AccountId, Person};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::trf;
+
 /// The undo delay's bounds and default, in seconds.
 pub const UNDO_MIN: u32 = 5;
 pub const UNDO_MAX: u32 = 30;
@@ -201,7 +203,7 @@ impl Schedule {
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Schedule { items: Vec::new(), path: Some(path) }, None),
-            Err(e) => return (Schedule { items: Vec::new(), path: Some(path) }, Some(format!("The scheduled messages could not be read: {e}"))),
+            Err(e) => return (Schedule { items: Vec::new(), path: Some(path) }, Some(trf!("The scheduled messages could not be read: {error}", error = e))),
         };
         match serde_json::from_slice::<File>(&bytes) {
             Ok(f) => (Schedule { items: f.items, path: Some(path) }, None),
@@ -209,7 +211,7 @@ impl Schedule {
                 let mut aside = path.clone().into_os_string();
                 aside.push(".damaged");
                 let _ = std::fs::rename(&path, PathBuf::from(aside));
-                (Schedule { items: Vec::new(), path: Some(path) }, Some(format!("The scheduled messages' file was damaged and was set aside: {e}")))
+                (Schedule { items: Vec::new(), path: Some(path) }, Some(trf!("The scheduled messages' file was damaged and was set aside: {error}", error = e)))
             }
         }
     }
@@ -217,10 +219,10 @@ impl Schedule {
     fn save(&self) -> Result<(), String> {
         let Some(path) = &self.path else { return Ok(()) };
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("The scheduled messages could not be saved: {e}"))?;
+            std::fs::create_dir_all(dir).map_err(|e| trf!("The scheduled messages could not be saved: {error}", error = e))?;
         }
-        let bytes = serde_json::to_vec(&File { items: self.items.clone() }).map_err(|e| format!("The scheduled messages could not be saved: {e}"))?;
-        mailalm_store::write_atomic(path, &bytes).map_err(|e| format!("The scheduled messages could not be saved: {e}"))
+        let bytes = serde_json::to_vec(&File { items: self.items.clone() }).map_err(|e| trf!("The scheduled messages could not be saved: {error}", error = e))?;
+        mailalm_store::write_atomic(path, &bytes).map_err(|e| trf!("The scheduled messages could not be saved: {error}", error = e))
     }
 
     pub fn list(&self) -> &[Scheduled] {

@@ -9,6 +9,7 @@ use egui::{Align, ComboBox, Grid, Id, Layout, Modal, RichText, TextEdit, Ui};
 use mailalm_engine::OAuthAccount;
 use mailalm_model::{Account, AccountId, ImapPreset, Provider, Rgb, Security, Server};
 
+use crate::i18n::{tr, trf};
 use crate::theme as t;
 
 /// Domains served by Microsoft and Google, whose accounts use their own APIs (phases 3 and 4).
@@ -144,10 +145,10 @@ impl AccountForm {
     fn unsupported(&self) -> Option<&'static str> {
         match self.browser_provider() {
             Some(Provider::Outlook) if !mailalm_engine::microsoft_available() => {
-                Some("This copy of MailALM was built without Microsoft sign-in: Hotmail and Outlook.com accounts cannot be added.")
+                Some(tr("This copy of MailALM was built without Microsoft sign-in: Hotmail and Outlook.com accounts cannot be added."))
             }
             Some(Provider::Gmail) if !mailalm_engine::google_available() => {
-                Some("This copy of MailALM was built without Google sign-in: Gmail accounts cannot be added.")
+                Some(tr("This copy of MailALM was built without Google sign-in: Gmail accounts cannot be added."))
             }
             _ => None,
         }
@@ -157,19 +158,21 @@ impl AccountForm {
     fn account(&self, id: AccountId, color: Rgb) -> Result<Account, String> {
         let address = self.address.trim().to_owned();
         if !mailalm_mime::address_is_valid(&address) {
-            return Err("Enter the account's e-mail address.".to_owned());
+            return Err(tr("Enter the account's e-mail address.").to_owned());
         }
         if let Some(why) = self.unsupported() {
             return Err(why.to_owned());
         }
-        let port = |s: &str, what: &str| s.trim().parse::<u16>().ok().filter(|p| *p != 0).ok_or(format!("The {what} port is not a number between 1 and 65535."));
+        let port = |s: &str, what: &str| {
+            s.trim().parse::<u16>().ok().filter(|p| *p != 0).ok_or(trf!("The {protocol} port is not a number between 1 and 65535.", protocol = what))
+        };
         let imap = Server::new(self.imap_host.trim(), port(&self.imap_port, "IMAP")?, self.imap_security);
         let smtp = Server::new(self.smtp_host.trim(), port(&self.smtp_port, "SMTP")?, self.smtp_security);
         if !imap.host_is_valid() {
-            return Err("The IMAP server's name is not valid (a name like imap.example.com).".to_owned());
+            return Err(tr("The IMAP server's name is not valid (a name like imap.example.com).").to_owned());
         }
         if !smtp.host_is_valid() {
-            return Err("The SMTP server's name is not valid (a name like smtp.example.com).".to_owned());
+            return Err(tr("The SMTP server's name is not valid (a name like smtp.example.com).").to_owned());
         }
         let preset = ImapPreset::for_address(&address);
         let preset = match preset.servers() {
@@ -214,19 +217,19 @@ impl AccountForm {
         let mut result = FormResult::Open;
         let busy = self.checking.is_some();
         let browser = self.browser_provider();
-        let title = if self.editing.is_some() { "Account settings" } else { "Add an account" };
+        let title = if self.editing.is_some() { tr("Account settings") } else { tr("Add an account") };
         let modal = Modal::new(Id::unique("mailalm-account-form")).show(ctx, |ui| {
             ui.set_width(520.0);
             ui.heading(title);
             ui.add_space(4.0);
             let intro = match browser {
                 Some(Provider::Outlook) => {
-                    "Hotmail or Outlook.com. MailALM opens Microsoft's sign-in page in your browser: the password is typed there, never in MailALM."
+                    tr("Hotmail or Outlook.com. MailALM opens Microsoft's sign-in page in your browser: the password is typed there, never in MailALM.")
                 }
                 Some(Provider::Gmail) => {
-                    "Gmail. MailALM opens Google's sign-in page in your browser: the password is typed there, never in MailALM. Google warns that it has not verified MailALM: choose Advanced, then Go to MailALM, and tick every permission."
+                    tr("Gmail. MailALM opens Google's sign-in page in your browser: the password is typed there, never in MailALM. Google warns that it has not verified MailALM: choose Advanced, then Go to MailALM, and tick every permission.")
                 }
-                _ => "Vidéotron, Bell, Hotmail, Outlook.com, Gmail or any IMAP account. MailALM signs in once to check the settings before keeping them.",
+                _ => tr("Vidéotron, Bell, Hotmail, Outlook.com, Gmail or any IMAP account. MailALM signs in once to check the settings before keeping them."),
             };
             ui.label(RichText::new(intro).size(12.0).color(t::muted()));
             ui.add_space(10.0);
@@ -243,30 +246,30 @@ impl AccountForm {
             ui.horizontal(|ui| {
                 if busy {
                     ui.spinner();
-                    let waiting = if browser.is_some() { "Waiting for the sign-in in your browser…" } else { "Signing in…" };
+                    let waiting = if browser.is_some() { tr("Waiting for the sign-in in your browser…") } else { tr("Signing in…") };
                     ui.label(RichText::new(waiting).color(t::muted()));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some(provider) = browser {
                         let label = match (self.editing.is_some(), provider) {
-                            (true, _) => "Sign in again",
-                            (false, Provider::Gmail) => "Sign in with Google",
-                            (false, _) => "Sign in with Microsoft",
+                            (true, _) => tr("Sign in again"),
+                            (false, Provider::Gmail) => tr("Sign in with Google"),
+                            (false, _) => tr("Sign in with Microsoft"),
                         };
                         if ui.add_enabled(!busy, egui::Button::new(label)).clicked() {
                             self.submit_browser(ctx, provider);
                         }
-                        if self.editing.is_some() && ui.add_enabled(!busy, egui::Button::new("Save")).clicked() {
+                        if self.editing.is_some() && ui.add_enabled(!busy, egui::Button::new(tr("Save"))).clicked() {
                             self.save_browser(&mut result);
                         }
                     } else {
-                        let label = if self.editing.is_some() { "Save" } else { "Sign in and add" };
+                        let label = if self.editing.is_some() { tr("Save") } else { tr("Sign in and add") };
                         if ui.add_enabled(!busy, egui::Button::new(label)).clicked() {
                             self.submit(ctx, new_id, color, &mut result);
                         }
                     }
                     // A sign-in in the browser can be left: its answer is then ignored.
-                    if ui.add_enabled(!busy || browser.is_some(), egui::Button::new("Cancel")).clicked() {
+                    if ui.add_enabled(!busy || browser.is_some(), egui::Button::new(tr("Cancel"))).clicked() {
                         result = FormResult::Cancelled;
                     }
                 });
@@ -281,27 +284,27 @@ impl AccountForm {
     fn fields(&mut self, ui: &mut Ui) {
         let browser = self.browser_provider().is_some();
         Grid::new("mailalm-account-fields").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            ui.label("E-mail address");
+            ui.label(tr("E-mail address"));
             let addr = ui.add_enabled(self.editing.is_none(), TextEdit::singleline(&mut self.address).hint_text("you@videotron.ca").desired_width(320.0));
             if addr.changed() {
                 self.follow_address();
             }
             ui.end_row();
             if !browser {
-                ui.label("Password");
-                let hint = if self.editing.is_some() { "Unchanged" } else { "" };
+                ui.label(tr("Password"));
+                let hint = if self.editing.is_some() { tr("Unchanged") } else { "" };
                 ui.add(TextEdit::singleline(&mut self.password).password(true).hint_text(hint).desired_width(320.0));
                 ui.end_row();
             }
-            ui.label("Name in MailALM");
-            ui.add(TextEdit::singleline(&mut self.name).hint_text("Vidéotron, Bell, Outlook, Gmail, Work…").desired_width(320.0));
+            ui.label(tr("Name in MailALM"));
+            ui.add(TextEdit::singleline(&mut self.name).hint_text(tr("Vidéotron, Bell, Outlook, Gmail, Work…")).desired_width(320.0));
             ui.end_row();
         });
         if browser {
             return;
         }
         ui.add_space(6.0);
-        let label = if self.show_servers { "Hide the servers" } else { "Servers…" };
+        let label = if self.show_servers { tr("Hide the servers") } else { tr("Servers…") };
         if ui.small_button(label).clicked() {
             self.show_servers = !self.show_servers;
         }
@@ -309,15 +312,15 @@ impl AccountForm {
             ui.add_space(6.0);
             let mut typed = false;
             Grid::new("mailalm-account-servers").num_columns(4).spacing([8.0, 8.0]).show(ui, |ui| {
-                ui.label("User name");
-                typed |= ui.add(TextEdit::singleline(&mut self.username).hint_text("The address").desired_width(220.0)).changed();
+                ui.label(tr("User name"));
+                typed |= ui.add(TextEdit::singleline(&mut self.username).hint_text(tr("The address")).desired_width(220.0)).changed();
                 ui.end_row();
-                ui.label("Incoming (IMAP)");
+                ui.label(tr("Incoming (IMAP)"));
                 typed |= ui.add(TextEdit::singleline(&mut self.imap_host).hint_text("imap.example.com").desired_width(220.0)).changed();
                 typed |= ui.add(TextEdit::singleline(&mut self.imap_port).desired_width(48.0)).changed();
                 typed |= security_combo(ui, "imap-security", &mut self.imap_security);
                 ui.end_row();
-                ui.label("Outgoing (SMTP)");
+                ui.label(tr("Outgoing (SMTP)"));
                 typed |= ui.add(TextEdit::singleline(&mut self.smtp_host).hint_text("smtp.example.com").desired_width(220.0)).changed();
                 typed |= ui.add(TextEdit::singleline(&mut self.smtp_port).desired_width(48.0)).changed();
                 typed |= security_combo(ui, "smtp-security", &mut self.smtp_security);
@@ -328,7 +331,7 @@ impl AccountForm {
             }
             ui.add_space(4.0);
             ui.label(
-                RichText::new("Every connection is encrypted: TLS, or STARTTLS which MailALM requires. There is no unencrypted option.")
+                RichText::new(tr("Every connection is encrypted: TLS, or STARTTLS which MailALM requires. There is no unencrypted option."))
                     .size(11.5)
                     .color(t::faint()),
             );
@@ -343,7 +346,7 @@ impl AccountForm {
         match &self.editing {
             Some(a) => {
                 if a.provider != m.provider || !a.address.eq_ignore_ascii_case(&m.address) {
-                    return Err(format!("You signed in to {who} as {}, not as {}. Sign in again with {}.", m.address, a.address, a.address));
+                    return Err(trf!("You signed in to {provider} as {signed_in}, not as {address}. Sign in again with {address}.", provider = who, signed_in = m.address, address = a.address));
                 }
                 let mut a = a.clone();
                 if !name.is_empty() {
@@ -373,7 +376,7 @@ impl AccountForm {
         }
         let hint = self.address.trim().to_owned();
         if !hint.is_empty() && !mailalm_mime::address_is_valid(&hint) {
-            self.error = Some("Enter the account's e-mail address.".to_owned());
+            self.error = Some(tr("Enter the account's e-mail address.").to_owned());
             return;
         }
         let (tx, rx) = mpsc::channel();
@@ -389,7 +392,7 @@ impl AccountForm {
             ctx.request_repaint();
         });
         if spawned.is_err() {
-            self.error = Some("The sign-in could not be started.".to_owned());
+            self.error = Some(tr("The sign-in could not be started.").to_owned());
             return;
         }
         self.checking = Some(rx);
@@ -425,7 +428,7 @@ impl AccountForm {
                 // Same password: the servers are checked at the next sync.
                 *result = FormResult::Done(account, None);
             } else {
-                self.error = Some("Enter the account's password.".to_owned());
+                self.error = Some(tr("Enter the account's password.").to_owned());
             }
             return;
         }
@@ -438,7 +441,7 @@ impl AccountForm {
             ctx.request_repaint();
         });
         if spawned.is_err() {
-            self.error = Some("The sign-in could not be started.".to_owned());
+            self.error = Some(tr("The sign-in could not be started.").to_owned());
             return;
         }
         self.candidate = Some(account);
@@ -465,7 +468,7 @@ fn security_combo(ui: &mut Ui, id: &str, value: &mut Security) -> bool {
 /// addresses alone.
 pub(crate) fn open_in_browser(url: &str) -> Result<(), String> {
     if !url.starts_with("https://") {
-        return Err("not a secure web address".to_owned());
+        return Err(tr("not a secure web address").to_owned());
     }
     launch_browser(url)
 }
@@ -479,7 +482,7 @@ pub(crate) fn open_web_link(url: &str) -> Result<(), String> {
     let web = url.starts_with("https://") || url.starts_with("http://");
     let clean = !url.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '<' | '>' | '\\' | '^' | '`' | '{' | '}' | '|') || ('\u{200b}'..='\u{206f}').contains(&c) || c == '\u{feff}');
     if !web || !clean || url.len() > 4096 {
-        return Err("not a web address MailALM opens".to_owned());
+        return Err(tr("not a web address MailALM opens").to_owned());
     }
     launch_browser(url)
 }
@@ -491,5 +494,5 @@ fn launch_browser(url: &str) -> Result<(), String> {
         .arg(url)
         .spawn()
         .map(drop)
-        .map_err(|e| format!("the browser could not be opened: {e}"))
+        .map_err(|e| trf!("the browser could not be opened: {error}", error = e))
 }

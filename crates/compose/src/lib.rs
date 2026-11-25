@@ -37,5 +37,18 @@ pub use picture::{ImageError, InlineImage, MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS, MA
 pub use text::TextMap;
 pub use widget::{LinkHit, RichEditor, ToolbarRequest, ToolbarState, toolbar};
 
+/// How the toolbar's texts are translated: the app's lookup, set as it starts. English until then.
+static TRANSLATE: std::sync::OnceLock<fn(&'static str) -> &'static str> = std::sync::OnceLock::new();
+
+/// Gives the editor the app's translation of its texts (written in English, the lookup's key).
+pub fn set_translator(translate: fn(&'static str) -> &'static str) {
+    let _ = TRANSLATE.set(translate);
+}
+
+/// A text of the toolbar, in the interface's language.
+pub(crate) fn tr(english: &'static str) -> &'static str {
+    TRANSLATE.get().map_or(english, |translate| translate(english))
+}
+
 #[cfg(test)]
 mod tests;

@@ -20,6 +20,7 @@ use mailalm_model::{Account, AccountId, Person, Provider, Workspace};
 use crate::calendar::CalendarView;
 use crate::contacts::ContactsView;
 use crate::event_window::EventEditor;
+use crate::i18n::tr;
 use crate::invitation::InvitationState;
 use crate::mailbox::{Mailboxes, MessageKey};
 use crate::reminders::Reminders;
@@ -85,9 +86,9 @@ pub enum PimPage {
 impl PimPage {
     pub fn title(self) -> &'static str {
         match self {
-            PimPage::Calendar => "Calendar",
-            PimPage::Contacts => "Contacts",
-            PimPage::Tasks => "Tasks",
+            PimPage::Calendar => tr("Calendar"),
+            PimPage::Contacts => tr("Contacts"),
+            PimPage::Tasks => tr("Tasks"),
         }
     }
 }
@@ -273,6 +274,6 @@ pub fn link_domain(url: &str) -> Option<String> {
 /// Opens a link of an event in the browser, on the user's click only: `https` links that pass
 /// the model's check alone.
 pub fn open_link(url: &str) -> Result<(), String> {
-    let url = web_link(url).ok_or("This is not a secure web link: MailALM doesn't open it.")?;
+    let url = web_link(url).ok_or(tr("This is not a secure web link: MailALM doesn't open it."))?;
     crate::accounts::open_in_browser(&url)
 }

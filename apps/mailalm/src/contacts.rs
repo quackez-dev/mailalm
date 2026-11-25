@@ -7,6 +7,7 @@ use egui::{Button, Frame, Margin, RichText, ScrollArea, TextEdit, Ui};
 use mailalm_model::{AccountId, Person};
 
 use crate::agenda::{Ctx, Pim};
+use crate::i18n::{tr, trf};
 use crate::theme as t;
 
 /// A contact line's height.
@@ -25,10 +26,10 @@ pub struct ContactsView {
 impl Pim {
     /// The search, in the command bar.
     pub fn contacts_commands(&mut self, ui: &mut Ui) {
-        ui.label(RichText::new("Contacts").size(15.0).strong());
+        ui.label(RichText::new(tr("Contacts")).size(15.0).strong());
         ui.separator();
-        ui.add(TextEdit::singleline(&mut self.contacts.search).desired_width(320.0).hint_text("Search: a name, an address, a company, a phone"));
-        if !self.contacts.search.is_empty() && ui.small_button("Clear").clicked() {
+        ui.add(TextEdit::singleline(&mut self.contacts.search).desired_width(320.0).hint_text(tr("Search: a name, an address, a company, a phone")));
+        if !self.contacts.search.is_empty() && ui.small_button(tr("Clear")).clicked() {
             self.contacts.search.clear();
         }
     }
@@ -36,9 +37,9 @@ impl Pim {
     /// The accounts, in the folder pane.
     pub fn contacts_sidebar(&mut self, ui: &mut Ui, cx: &Ctx<'_>) {
         ui.add_space(6.0);
-        ui.label(RichText::new("ADDRESS BOOKS").size(11.0).strong().color(t::faint()));
+        ui.label(RichText::new(tr("ADDRESS BOOKS")).size(11.0).strong().color(t::faint()));
         let total: usize = self.data.values().map(|d| d.contacts.len()).sum();
-        if ui.add(Button::selectable(self.contacts.account.is_none(), format!("All accounts  ({total})"))).clicked() {
+        if ui.add(Button::selectable(self.contacts.account.is_none(), trf!("All accounts  ({count})", count = total))).clicked() {
             self.contacts.account = None;
         }
         for a in cx.ws.accounts() {
@@ -52,7 +53,7 @@ impl Pim {
             });
         }
         ui.add_space(12.0);
-        ui.label(RichText::new("Read from Outlook and Google; change them there. IMAP accounts: the people you wrote to are offered when you write.").size(11.0).color(t::faint()));
+        ui.label(RichText::new(tr("Read from Outlook and Google; change them there. IMAP accounts: the people you wrote to are offered when you write.")).size(11.0).color(t::faint()));
     }
 
     /// The contacts found.
@@ -82,10 +83,11 @@ impl Pim {
         let mut write_to: Option<(AccountId, Person)> = None;
         egui::CentralPanel::default().frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(20, 14))).show(ui, |ui| {
             let shown = &self.contacts.shown;
-            ui.label(RichText::new(format!("{} contact{}", shown.len(), if shown.len() == 1 { "" } else { "s" })).size(12.0).color(t::faint()));
+            let count = if shown.len() == 1 { tr("1 contact").to_owned() } else { trf!("{count} contacts", count = shown.len()) };
+            ui.label(RichText::new(count).size(12.0).color(t::faint()));
             ui.add_space(6.0);
             if shown.is_empty() {
-                ui.label(RichText::new("No contact here. Outlook and Gmail accounts show their contacts once synced.").color(t::faint()));
+                ui.label(RichText::new(tr("No contact here. Outlook and Gmail accounts show their contacts once synced.")).color(t::faint()));
                 return;
             }
             ScrollArea::vertical().id_salt("mailalm-contacts").auto_shrink([false, false]).show_rows(ui, ROW_H, shown.len(), |ui, rows| {
@@ -109,7 +111,7 @@ impl Pim {
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             for e in c.emails.iter().take(3).rev() {
-                                if ui.add(Button::new(RichText::new(e).color(t::accent_text())).frame_when_inactive(false)).on_hover_text(format!("Write to {e} from {}", cx.name(*a))).clicked() {
+                                if ui.add(Button::new(RichText::new(e).color(t::accent_text())).frame_when_inactive(false)).on_hover_text(trf!("Write to {address} from {account}", address = e, account = cx.name(*a))).clicked() {
                                     write_to = Some((*a, Person { name: c.display(), address: e.clone() }));
                                 }
                             }

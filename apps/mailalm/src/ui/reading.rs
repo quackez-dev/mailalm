@@ -11,14 +11,12 @@ use mailalm_model::Person;
 use super::{MailApp, avatar_color, initials, people, pill, size_text};
 use crate::agenda::Ctx;
 use crate::attachments::{self, Review};
+use crate::i18n::{tr, tr_key, trf};
 use crate::icons::{self, Icon};
 use crate::mailbox::MessageKey;
 use crate::reading::{MessageView, ViewAction};
 use crate::theme as t;
 use crate::time;
-
-/// The red of the DMARC banner.
-const ALERT_BG: Color32 = Color32::from_rgb(0x3b, 0x16, 0x16);
 
 /// A mailing list to leave, waiting for the user's confirmation.
 pub(super) struct LeaveList {
@@ -64,7 +62,7 @@ impl MailApp {
         egui::CentralPanel::default().frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(24, 18))).show(ui, |ui| {
             let Some(r) = &self.reading else {
                 ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("Select a message").color(t::faint()));
+                    ui.label(RichText::new(tr("Select a message")).color(t::faint()));
                 });
                 return;
             };
@@ -79,7 +77,7 @@ impl MailApp {
                         }
                         None => {
                             ui.spinner();
-                            ui.label(RichText::new("Loading the message…").color(t::faint()));
+                            ui.label(RichText::new(tr("Loading the message…")).color(t::faint()));
                         }
                     }
                 });
@@ -87,7 +85,7 @@ impl MailApp {
             };
             ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    let subject = if parsed.subject.is_empty() { "(no subject)" } else { parsed.subject.as_str() };
+                    let subject = if parsed.subject.is_empty() { tr("(no subject)") } else { parsed.subject.as_str() };
                     ui.label(RichText::new(subject).size(20.0).strong());
                     if summary.as_ref().is_some_and(|s| s.flags.flagged) {
                         ui.label(RichText::new("⚑").size(16.0).color(t::danger()));
@@ -120,27 +118,25 @@ impl MailApp {
                         let date = parsed.date.or(summary.as_ref().map(|s| s.date)).unwrap_or(0);
                         ui.label(RichText::new(time::long(date)).size(12.0).color(t::muted()));
                         if !parsed.to.is_empty() {
-                            ui.label(RichText::new(format!("To: {}", people(&parsed.to))).size(12.0).color(t::muted()));
+                            ui.label(RichText::new(trf!("To: {people}", people = people(&parsed.to))).size(12.0).color(t::muted()));
                         }
                         if !parsed.cc.is_empty() {
-                            ui.label(RichText::new(format!("Cc: {}", people(&parsed.cc))).size(12.0).color(t::muted()));
+                            ui.label(RichText::new(trf!("Cc: {people}", people = people(&parsed.cc))).size(12.0).color(t::muted()));
                         }
                     });
                 });
                 ui.add_space(10.0);
                 let auth = mailalm_safety::authentication(parsed.authentication_results.as_deref());
                 if let Some(alert) = mailalm_safety::dmarc_alert(&auth, &parsed.from.address) {
-                    Frame::new().fill(ALERT_BG).stroke(Stroke::new(1.0, t::danger())).corner_radius(6).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+                    Frame::new().fill(t::danger_bg()).stroke(Stroke::new(1.0, t::danger())).corner_radius(6).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.label(RichText::new(format!("This message may not come from {}", alert.domain)).strong().color(t::danger()));
-                        let mut text = format!("It says it comes from {}, but that domain's DMARC check failed", alert.domain);
-                        if let Some(by) = &alert.checked_by {
-                            text.push_str(&format!(" (checked by {by})"));
-                        }
-                        if let Some(action) = &alert.action {
-                            text.push_str(&format!("; the domain asks for such mail to be handled as: {action}"));
-                        }
-                        text.push_str(". Don't trust its links, its attachments or what it asks of you.");
+                        ui.label(RichText::new(trf!("This message may not come from {domain}", domain = alert.domain)).strong().color(t::danger()));
+                        let text = match (&alert.checked_by, &alert.action) {
+                            (None, None) => trf!("It says it comes from {domain}, but that domain's DMARC check failed. Don't trust its links, its attachments or what it asks of you.", domain = alert.domain),
+                            (Some(by), None) => trf!("It says it comes from {domain}, but that domain's DMARC check failed (checked by {by}). Don't trust its links, its attachments or what it asks of you.", domain = alert.domain, by = by),
+                            (None, Some(policy)) => trf!("It says it comes from {domain}, but that domain's DMARC check failed; the domain asks for such mail to be handled as: {action}. Don't trust its links, its attachments or what it asks of you.", domain = alert.domain, action = policy),
+                            (Some(by), Some(policy)) => trf!("It says it comes from {domain}, but that domain's DMARC check failed (checked by {by}); the domain asks for such mail to be handled as: {action}. Don't trust its links, its attachments or what it asks of you.", domain = alert.domain, by = by, action = policy),
+                        };
                         ui.label(RichText::new(text).size(12.5).color(t::text()));
                     });
                     ui.add_space(8.0);
@@ -148,9 +144,9 @@ impl MailApp {
                 ui.horizontal_wrapped(|ui| {
                     let formatted = view.as_ref().is_some_and(MessageView::formatted);
                     if formatted {
-                        pill(ui, "Formatted by MailALM · no web content or scripts", t::muted(), t::raised());
+                        pill(ui, tr("Formatted by MailALM · no web content or scripts"), t::muted(), t::raised());
                     } else if parsed.from_html {
-                        pill(ui, "Shown as text · no web content, pictures or scripts loaded", t::muted(), t::raised());
+                        pill(ui, tr("Shown as text · no web content, pictures or scripts loaded"), t::muted(), t::raised());
                     }
                     attachments::auth_pills(ui, &auth);
                 });
@@ -164,12 +160,12 @@ impl MailApp {
                 }
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
-                    for label in ["Reply", "Reply all", "Forward"] {
-                        if ui.button(label).clicked() {
+                    for label in [tr_key("Reply"), tr_key("Reply all"), tr_key("Forward")] {
+                        if ui.button(tr(label)).clicked() {
                             action = Some(label);
                         }
                     }
-                    if parsed.unsubscribe.is_some() && ui.button("Unsubscribe…").on_hover_text("Leave the mailing list this message came from").clicked() {
+                    if parsed.unsubscribe.is_some() && ui.button(tr("Unsubscribe…")).on_hover_text(tr("Leave the mailing list this message came from")).clicked() {
                         action = Some("Unsubscribe");
                     }
                 });
@@ -181,7 +177,8 @@ impl MailApp {
                     ui.horizontal(|ui| {
                         let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
                         icons::paint(ui.painter(), r, Icon::Lock, t::warn());
-                        ui.label(RichText::new(format!("{n} attachment{} · locked until you review each one", if n > 1 { "s" } else { "" })).size(12.0).color(t::muted()));
+                        let text = if n > 1 { trf!("{count} attachments · locked until you review each one", count = n) } else { tr("1 attachment · locked until you review each one").to_owned() };
+                        ui.label(RichText::new(text).size(12.0).color(t::muted()));
                     });
                     ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
@@ -194,9 +191,9 @@ impl MailApp {
                                     icons::paint(ui.painter(), rect, if reviewed { Icon::Check } else { Icon::Lock }, attachments::lock_color(reviewed));
                                     ui.vertical(|ui| {
                                         ui.label(RichText::new(&a.name).strong());
-                                        ui.label(RichText::new(format!("{} · {} (declared)", size_text(a.size), a.declared_type)).size(12.0).color(t::faint()));
+                                        ui.label(RichText::new(trf!("{size} · {kind} (declared)", size = size_text(a.size), kind = a.declared_type)).size(12.0).color(t::faint()));
                                     });
-                                    let review = ui.button("Review…").on_hover_text("Check what this file really is, then preview, save or open it");
+                                    let review = ui.button(tr("Review…")).on_hover_text(tr("Check what this file really is, then preview, save or open it"));
                                     if review.clicked() {
                                         review_request = Some((index, a.clone(), parsed.from.clone(), auth.clone()));
                                     }
@@ -247,7 +244,7 @@ impl MailApp {
         match a {
             ViewAction::OpenWeb(url) => {
                 if let Err(e) = crate::accounts::open_web_link(&url) {
-                    self.warn(format!("The link was not opened: {e}."));
+                    self.warn(trf!("The link was not opened: {error}.", error = e));
                 }
             }
             ViewAction::Write { to, subject, body } => {
@@ -260,7 +257,7 @@ impl MailApp {
                 let Some(sender) = self.reading.as_ref().and_then(|r| r.parsed.as_ref()).map(|p| p.from.address.clone()) else { return };
                 self.settings.set_pictures_approved(&sender, true);
                 match self.settings.save() {
-                    Ok(()) => self.say(format!("The pictures of {sender}'s messages will load without asking. Settings, Writing and reading lists the senders approved.")),
+                    Ok(()) => self.say(trf!("The pictures of {sender}'s messages will load without asking. Settings, Writing and reading lists the senders approved.", sender = sender)),
                     Err(e) => self.warn(e),
                 }
             }
@@ -273,7 +270,7 @@ impl MailApp {
         if self.send(key.account, command) {
             self.review = Some(Review::new(key, index, info, sender, auth));
         } else {
-            self.warn("The account is not running: the attachment cannot be read.");
+            self.warn(tr("The account is not running: the attachment cannot be read."));
         }
     }
 
@@ -291,25 +288,22 @@ impl MailApp {
         let mut web: Option<String> = None;
         let m = egui::Modal::new(Id::unique("mailalm-unsubscribe")).show(ctx, |ui| {
             ui.set_width(500.0);
-            ui.heading("Leave this mailing list?");
+            ui.heading(tr("Leave this mailing list?"));
             ui.add_space(8.0);
             if let Some(url) = &l.how.one_click {
                 let host = Unsubscribe::host_of(url);
-                ui.label(RichText::new("In one click").strong());
-                ui.label(format!(
-                    "MailALM sends one request to {host}: a POST holding only the words \"List-Unsubscribe=One-Click\" (no cookie, nothing about you). The list then stops writing to {}.",
-                    l.me
-                ));
-                if ui.button(format!("Unsubscribe at {host}")).clicked() {
+                ui.label(RichText::new(tr("In one click")).strong());
+                ui.label(trf!("MailALM sends one request to {host}: a POST holding only the words \"List-Unsubscribe=One-Click\" (no cookie, nothing about you). The list then stops writing to {me}.", host = host, me = l.me));
+                if ui.button(trf!("Unsubscribe at {host}", host = host)).clicked() {
                     chosen = Some(Some(UnsubscribeHow::OneClick));
                 }
                 ui.add_space(8.0);
             }
             if let Some(mail) = &l.how.mailto {
-                ui.label(RichText::new("By mail").strong());
-                let subject = if mail.subject.is_empty() { "(no subject)".to_owned() } else { format!("\"{}\"", mail.subject) };
-                ui.label(format!("MailALM sends a message from {} to {}, subject {subject}, as the list asks.", l.me, mail.to));
-                if ui.button("Send the unsubscribe message").clicked() {
+                ui.label(RichText::new(tr("By mail")).strong());
+                let subject = if mail.subject.is_empty() { tr("(no subject)").to_owned() } else { trf!("\"{subject}\"", subject = mail.subject) };
+                ui.label(trf!("MailALM sends a message from {me} to {to}, subject {subject}, as the list asks.", me = l.me, to = mail.to, subject = subject));
+                if ui.button(tr("Send the unsubscribe message")).clicked() {
                     chosen = Some(Some(UnsubscribeHow::Mail));
                 }
                 ui.add_space(8.0);
@@ -318,14 +312,14 @@ impl MailApp {
                 && l.how.mailto.is_none()
                 && let Some(url) = &l.how.web
             {
-                ui.label(RichText::new("On its web page").strong());
-                ui.label(format!("This list unsubscribes on its web page, at {}. MailALM opens it in your browser; finish there.", Unsubscribe::host_of(url)));
-                if ui.button("Open the page").clicked() {
+                ui.label(RichText::new(tr("On its web page")).strong());
+                ui.label(trf!("This list unsubscribes on its web page, at {host}. MailALM opens it in your browser; finish there.", host = Unsubscribe::host_of(url)));
+                if ui.button(tr("Open the page")).clicked() {
                     web = Some(url.clone());
                 }
                 ui.add_space(8.0);
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(tr("Cancel")).clicked() {
                 chosen = Some(None);
             }
         });
@@ -335,7 +329,7 @@ impl MailApp {
         if let Some(url) = web {
             self.leave_list = None;
             if let Err(e) = crate::accounts::open_web_link(&url) {
-                self.warn(format!("The page was not opened: {e}."));
+                self.warn(trf!("The page was not opened: {error}.", error = e));
             }
             return;
         }
@@ -344,9 +338,9 @@ impl MailApp {
         if let Some(how) = choice {
             let command = Command::Unsubscribe { folder: l.key.folder.clone(), uid: l.key.uid, how };
             if self.engine.send(l.key.account, command) {
-                self.say("Unsubscribing…");
+                self.say(tr("Unsubscribing…"));
             } else {
-                self.warn("The account is not running: nothing was sent.");
+                self.warn(tr("The account is not running: nothing was sent."));
             }
         }
     }

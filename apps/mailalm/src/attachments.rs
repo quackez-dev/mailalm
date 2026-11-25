@@ -24,6 +24,7 @@ use mailalm_model::Person;
 use mailalm_safety::files::{Mark, TempFolder, save_marked};
 use mailalm_safety::{Authentication, Check, Preview, Report, Severity, Verdict};
 
+use crate::i18n::{tr, trf};
 use crate::mailbox::MessageKey;
 use crate::preview::{self, PDF_PAGES, Rendered};
 use crate::theme as t;
@@ -101,7 +102,7 @@ impl Review {
                 State::Loading => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("Reading the attachment from the message…").color(t::muted()));
+                        ui.label(RichText::new(tr("Reading the attachment from the message…")).color(t::muted()));
                     });
                 }
                 State::Failed(e) => {
@@ -111,7 +112,7 @@ impl Review {
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Close").clicked() {
+                if ui.button(tr("Close")).clicked() {
                     close = true;
                 }
             });
@@ -124,26 +125,26 @@ impl Review {
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
             crate::icons::paint(ui.painter(), r, crate::icons::Icon::Lock, t::warn());
-            ui.label(RichText::new("Review an attachment").size(17.0).strong());
+            ui.label(RichText::new(tr("Review an attachment")).size(17.0).strong());
         });
         ui.add_space(8.0);
         egui::Grid::new("mailalm-review-facts").num_columns(2).spacing([14.0, 6.0]).show(ui, |ui| {
-            fact(ui, "Name", &self.info.name);
-            fact(ui, "Size", &size_text(self.info.size));
-            fact(ui, "Declared type", &self.info.declared_type);
+            fact(ui, tr("Name"), &self.info.name);
+            fact(ui, tr("Size"), &size_text(self.info.size));
+            fact(ui, tr("Declared type"), &self.info.declared_type);
             let from = if self.sender.name.is_empty() {
                 self.sender.address.clone()
             } else {
                 format!("{} <{}>", self.sender.name, self.sender.address)
             };
-            fact(ui, "From", &from);
-            ui.label(RichText::new("Sender checks").color(t::muted()));
+            fact(ui, tr("From"), &from);
+            ui.label(RichText::new(tr("Sender checks")).color(t::muted()));
             ui.vertical(|ui| {
                 auth_pills(ui, &self.auth);
                 let by = match (&self.auth.checked_by, self.auth.found) {
-                    (_, false) => "The message has no Authentication-Results header: the sender was not checked.".to_owned(),
-                    (Some(by), true) => format!("As checked by {by}, the server that received the message."),
-                    (None, true) => "As checked by the server that received the message.".to_owned(),
+                    (_, false) => tr("The message has no Authentication-Results header: the sender was not checked.").to_owned(),
+                    (Some(by), true) => trf!("As checked by {server}, the server that received the message.", server = by),
+                    (None, true) => tr("As checked by the server that received the message.").to_owned(),
                 };
                 ui.label(RichText::new(by).size(11.5).color(t::faint()));
             });
@@ -181,27 +182,27 @@ fn auth_pill(ui: &mut Ui, name: &str, c: &Check) {
 
 pub fn size_text(bytes: usize) -> String {
     match bytes {
-        b if b >= 1024 * 1024 => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
-        b if b >= 1024 => format!("{} KB", b / 1024),
-        b => format!("{b} bytes"),
+        b if b >= 1024 * 1024 => trf!("{size} MB", size = format!("{:.1}", b as f64 / (1024.0 * 1024.0))),
+        b if b >= 1024 => trf!("{size} KB", size = b / 1024),
+        b => trf!("{count} bytes", count = b),
     }
 }
 
 /// The checks' results, the actions and the preview.
 fn ready(ui: &mut Ui, r: &mut Ready, info: &AttachmentInfo, temp: &mut TempFolder) {
     egui::Grid::new("mailalm-review-content").num_columns(2).spacing([14.0, 6.0]).show(ui, |ui| {
-        ui.label(RichText::new("Content").color(t::muted()));
-        ui.label(RichText::new(format!("{} (found by MailALM from the file itself)", r.report.real.label())).strong());
+        ui.label(RichText::new(tr("Content")).color(t::muted()));
+        ui.label(RichText::new(trf!("{kind} (found by MailALM from the file itself)", kind = r.report.real.label())).strong());
         ui.end_row();
     });
     ui.add_space(8.0);
     if r.report.warnings.is_empty() {
-        ui.label(RichText::new("No warning.").color(t::ok()));
+        ui.label(RichText::new(tr("No warning.")).color(t::ok()));
     }
     for w in &r.report.warnings {
         let (fg, mark) = match w.severity() {
-            Severity::Danger => (t::danger(), "Danger"),
-            Severity::Caution => (t::warn(), "Caution"),
+            Severity::Danger => (t::danger(), tr("Danger")),
+            Severity::Caution => (t::warn(), tr("Caution")),
         };
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(mark).size(12.0).strong().color(fg));
@@ -213,26 +214,26 @@ fn ready(ui: &mut Ui, r: &mut Ready, info: &AttachmentInfo, temp: &mut TempFolde
     let policy = r.report.policy.clone();
     ui.horizontal_wrapped(|ui| {
         let preview_label = match policy.preview {
-            Some(Preview::Pdf) => format!("Preview (first {PDF_PAGES} pages)"),
-            _ => "Preview".to_owned(),
+            Some(Preview::Pdf) => trf!("Preview (first {count} pages)", count = PDF_PAGES),
+            _ => tr("Preview").to_owned(),
         };
         let preview_button =
             ui.add_enabled(policy.preview.is_some() && matches!(r.preview, PreviewState::Off | PreviewState::Failed(_)), Button::new(RichText::new(preview_label)));
         let preview_button =
-            if policy.preview.is_none() { preview_button.on_disabled_hover_text("MailALM previews pictures, PDFs and text only.") } else { preview_button };
+            if policy.preview.is_none() { preview_button.on_disabled_hover_text(tr("MailALM previews pictures, PDFs and text only.")) } else { preview_button };
         if preview_button.clicked()
             && let Some(kind) = policy.preview
         {
             r.preview = PreviewState::Working(preview::start(ui.ctx(), kind, Arc::clone(&r.bytes)));
         }
-        if ui.button("Save as…").clicked() {
+        if ui.button(tr("Save as…")).clicked() {
             r.confirm_open = false;
             r.note = save_as(&info.name, &r.bytes);
         }
-        let open = ui.add_enabled(policy.open.is_ok(), Button::new(RichText::new("Open with Windows…")));
+        let open = ui.add_enabled(policy.open.is_ok(), Button::new(RichText::new(tr("Open with Windows…"))));
         let open = match &policy.open {
             Err(why) => open.on_disabled_hover_text(why.as_str()),
-            Ok(_) => open.on_hover_text("Opens a copy with the program Windows uses for this type, after you confirm."),
+            Ok(_) => open.on_hover_text(tr("Opens a copy with the program Windows uses for this type, after you confirm.")),
         };
         if open.clicked() {
             r.confirm_open = true;
@@ -240,7 +241,7 @@ fn ready(ui: &mut Ui, r: &mut Ready, info: &AttachmentInfo, temp: &mut TempFolde
         }
     });
     if let Err(why) = &policy.open {
-        ui.label(RichText::new(format!("Open with Windows: {why}")).size(11.5).color(t::faint()));
+        ui.label(RichText::new(trf!("Open with Windows: {reason}", reason = why)).size(11.5).color(t::faint()));
     }
 
     if r.confirm_open
@@ -249,24 +250,21 @@ fn ready(ui: &mut Ui, r: &mut Ready, info: &AttachmentInfo, temp: &mut TempFolde
         ui.add_space(8.0);
         Frame::new().fill(t::warn_bg()).corner_radius(6).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
             ui.label(
-                RichText::new(format!(
-                    "Open \"{}\" with the program Windows uses for .{ext} files? Once it is open, MailALM cannot protect you: a marked copy is opened, so Office shows it in Protected View.",
-                    info.name
-                ))
+                RichText::new(trf!("Open \"{name}\" with the program Windows uses for .{ext} files? Once it is open, MailALM cannot protect you: a marked copy is opened, so Office shows it in Protected View.", name = info.name, ext = ext))
                 .color(t::warn()),
             );
             ui.horizontal(|ui| {
-                if ui.button("Open it").clicked() {
+                if ui.button(tr("Open it")).clicked() {
                     r.confirm_open = false;
                     r.note = Some(match temp.copy(&info.name, ext, &r.bytes) {
                         Ok(path) => match open_with_windows(&path) {
-                            Ok(()) => (format!("Opened with Windows (a copy, in {}).", temp.dir().display()), false),
+                            Ok(()) => (trf!("Opened with Windows (a copy, in {folder}).", folder = temp.dir().display()), false),
                             Err(e) => (e, true),
                         },
-                        Err(e) => (format!("The copy could not be written: {e}"), true),
+                        Err(e) => (trf!("The copy could not be written: {error}", error = e), true),
                     });
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     r.confirm_open = false;
                 }
             });
@@ -297,7 +295,7 @@ fn poll_preview(ctx: &egui::Context, r: &mut Ready, name: &str) {
         Ok(Rendered::Text(text)) => PreviewState::Text(text),
         Ok(Rendered::Failed(e)) => PreviewState::Failed(e),
         Err(TryRecvError::Empty) => return,
-        Err(TryRecvError::Disconnected) => PreviewState::Failed("The preview stopped: the file could not be drawn.".to_owned()),
+        Err(TryRecvError::Disconnected) => PreviewState::Failed(tr("The preview stopped: the file could not be drawn.").to_owned()),
     };
 }
 
@@ -309,7 +307,7 @@ fn show_preview(ui: &mut Ui, p: &PreviewState) {
         PreviewState::Working(_) => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(RichText::new("Drawing the preview…").color(t::muted()));
+                ui.label(RichText::new(tr("Drawing the preview…")).color(t::muted()));
             });
         }
         PreviewState::Image(tex) => {
@@ -321,7 +319,7 @@ fn show_preview(ui: &mut Ui, p: &PreviewState) {
                 ui.add_space(6.0);
             }
             if *total > pages.len() {
-                ui.label(RichText::new(format!("{} of {total} pages shown. Save the PDF to read the rest.", pages.len())).color(t::faint()));
+                ui.label(RichText::new(trf!("{shown} of {total} pages shown. Save the PDF to read the rest.", shown = pages.len(), total = total)).color(t::faint()));
             }
         }
         PreviewState::Text(text) => {
@@ -336,14 +334,14 @@ fn show_preview(ui: &mut Ui, p: &PreviewState) {
 /// Asks where to save the attachment and writes it there, marked as coming from the internet.
 /// The note to show, if anything was done.
 fn save_as(name: &str, bytes: &[u8]) -> Option<(String, bool)> {
-    let path = rfd::FileDialog::new().set_title("Save attachment").set_file_name(name).save_file()?;
+    let path = rfd::FileDialog::new().set_title(tr("Save attachment")).set_file_name(name).save_file()?;
     Some(match save_marked(&path, bytes) {
-        Ok(Mark::Written) => (format!("Saved as {}, marked as coming from the internet.", path.display()), false),
+        Ok(Mark::Written) => (trf!("Saved as {path}, marked as coming from the internet.", path = path.display()), false),
         Ok(Mark::NotWritten) => (
-            format!("Saved as {}, but that drive cannot keep the \"from the internet\" mark: be careful when you open it.", path.display()),
+            trf!("Saved as {path}, but that drive cannot keep the \"from the internet\" mark: be careful when you open it.", path = path.display()),
             true,
         ),
-        Err(e) => (format!("It could not be saved: {e}"), true),
+        Err(e) => (trf!("It could not be saved: {error}", error = e), true),
     })
 }
 
@@ -358,12 +356,12 @@ fn open_with_windows(path: &Path) -> Result<(), String> {
         .arg(path)
         .spawn()
         .map(drop)
-        .map_err(|e| format!("Windows could not open it: {e}"))
+        .map_err(|e| trf!("Windows could not open it: {error}", error = e))
 }
 
 #[cfg(not(windows))]
 fn open_with_windows(_path: &Path) -> Result<(), String> {
-    Err("Opening with another program is done on Windows only.".to_owned())
+    Err(tr("Opening with another program is done on Windows only.").to_owned())
 }
 
 /// The colour a review's lock takes in the reading pane.

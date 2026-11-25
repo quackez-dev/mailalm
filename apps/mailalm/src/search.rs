@@ -7,6 +7,8 @@
 
 use mailalm_model::{AccountId, FolderScope, SavedSearch, SearchScope, Summary};
 
+use crate::i18n::{tr, tr_key, trf};
+
 /// Which accounts a search covers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AccountsChoice {
@@ -40,8 +42,8 @@ pub struct Scope {
     pub server: bool,
 }
 
-/// The operators the search box knows, as the hint under it lists them.
-pub const OPERATORS: &str = "from:  to:  subject:  has:attachment  is:unread  is:read  is:flagged  before:2026-12-31  after:2026-01-01  in:folder  account:name  category:name  \"a phrase\"";
+/// The operators the search box knows, as the hint under it lists them (shown with `tr`).
+pub const OPERATORS: &str = tr_key("from:  to:  subject:  has:attachment  is:unread  is:read  is:flagged  before:2026-12-31  after:2026-01-01  in:folder  account:name  category:name  \"a phrase\"");
 
 /// The most searches kept as search folders.
 pub const MAX_SAVED: usize = 100;
@@ -94,10 +96,10 @@ pub fn resolve_saved(s: &SavedSearch, accounts: &[AccountId]) -> Vec<(AccountId,
 /// Adds a search folder; refused with a name already taken (case ignored) or past [`MAX_SAVED`].
 pub fn add_saved(list: &mut Vec<SavedSearch>, s: SavedSearch) -> Result<(), String> {
     if list.len() >= MAX_SAVED {
-        return Err(format!("MailALM keeps at most {MAX_SAVED} search folders: delete one first."));
+        return Err(trf!("MailALM keeps at most {count} search folders: delete one first.", count = MAX_SAVED));
     }
     if name_taken(list, &s.name, None) {
-        return Err(format!("A search folder is already named \"{}\".", s.name));
+        return Err(trf!("A search folder is already named \"{name}\".", name = s.name));
     }
     list.push(s);
     Ok(())
@@ -107,12 +109,12 @@ pub fn add_saved(list: &mut Vec<SavedSearch>, s: SavedSearch) -> Result<(), Stri
 pub fn rename_saved(list: &mut [SavedSearch], index: usize, name: &str) -> Result<(), String> {
     let cleaned = mailalm_model::pim::clean_line(name, mailalm_model::query::MAX_SAVED_NAME);
     if cleaned.is_empty() {
-        return Err("A search folder needs a name.".to_owned());
+        return Err(tr("A search folder needs a name.").to_owned());
     }
     if name_taken(list, &cleaned, Some(index)) {
-        return Err(format!("A search folder is already named \"{cleaned}\"."));
+        return Err(trf!("A search folder is already named \"{name}\".", name = cleaned));
     }
-    let s = list.get_mut(index).ok_or("This search folder is no longer there.")?;
+    let s = list.get_mut(index).ok_or(tr("This search folder is no longer there."))?;
     s.name = cleaned;
     Ok(())
 }

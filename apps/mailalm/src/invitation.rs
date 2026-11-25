@@ -16,6 +16,7 @@ use mailalm_model::Provider;
 
 use crate::agenda::{Ctx, Pim, link_domain, open_link, sources};
 use crate::calendar::{busy_label, repeat_text, response_label};
+use crate::i18n::{tr, trf};
 use crate::mailbox::MessageKey;
 use crate::theme as t;
 use crate::time;
@@ -81,16 +82,17 @@ fn main_event(inv: &Invitation) -> Option<&CalendarEvent> {
 fn changes(old: &CalendarEvent, new: &CalendarEvent) -> Vec<String> {
     let mut out = Vec::new();
     if old.start != new.start || old.end != new.end || old.all_day != new.all_day {
-        out.push(format!("Time: {} → {}", time::span(old.start, old.end, old.all_day), time::span(new.start, new.end, new.all_day)));
+        out.push(trf!("Time: {old} → {new}", old = time::span(old.start, old.end, old.all_day), new = time::span(new.start, new.end, new.all_day)));
     }
     if old.location != new.location {
-        out.push(format!("Place: {} → {}", if old.location.is_empty() { "(none)" } else { &old.location }, if new.location.is_empty() { "(none)" } else { &new.location }));
+        let (was, now) = (if old.location.is_empty() { tr("(none)") } else { old.location.as_str() }, if new.location.is_empty() { tr("(none)") } else { new.location.as_str() });
+        out.push(trf!("Place: {old} → {new}", old = was, new = now));
     }
     if old.title != new.title {
-        out.push(format!("Title: {} → {}", old.title, new.title));
+        out.push(trf!("Title: {old} → {new}", old = old.title, new = new.title));
     }
     if old.recurrence != new.recurrence {
-        out.push("Repetition changed".to_owned());
+        out.push(tr("Repetition changed").to_owned());
     }
     out
 }
@@ -110,7 +112,7 @@ impl Pim {
         let k = (key.clone(), index);
         if !self.invitations.contains_key(&k) {
             let asked = cx.engine.send(key.account, Command::Pim(PimCommand::Invitation { folder: key.folder.clone(), uid: key.uid, index }));
-            self.invitations.insert(k.clone(), if asked { InvitationState::Loading } else { InvitationState::Failed("The account is not running.".to_owned()) });
+            self.invitations.insert(k.clone(), if asked { InvitationState::Loading } else { InvitationState::Failed(tr("The account is not running.").to_owned()) });
         }
         let me = cx.account(key.account).map(|a| a.address.clone()).unwrap_or_default();
         let provider = cx.provider(key.account);
@@ -124,12 +126,12 @@ impl Pim {
                 InvitationState::Loading => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("Reading the invitation…").color(t::muted()));
+                        ui.label(RichText::new(tr("Reading the invitation…")).color(t::muted()));
                     });
                     return;
                 }
                 InvitationState::Failed(e) => {
-                    ui.label(RichText::new(format!("This message carries a calendar MailALM could not read: {e}")).color(t::warn()));
+                    ui.label(RichText::new(trf!("This message carries a calendar MailALM could not read: {error}", error = e)).color(t::warn()));
                     return;
                 }
                 InvitationState::Ready(r) => r,
@@ -139,48 +141,52 @@ impl Pim {
             let existing = self.data.get(&key.account).and_then(|d| d.events.iter().find(|e| e.uid == ev.uid && (ev.recurrence_id.is_none() || e.recurrence_id == ev.recurrence_id))).cloned();
             let i_organize = ev.organizer.as_ref().is_some_and(|o| o.is(&me));
             let heading = match method {
-                Method::Request if existing.is_some() => "Meeting update",
-                Method::Request => "Meeting invitation",
-                Method::Cancel => "Meeting cancelled",
-                Method::Reply => "Answer to your meeting",
-                Method::Counter => "New time proposed",
-                _ => "Calendar",
+                Method::Request if existing.is_some() => tr("Meeting update"),
+                Method::Request => tr("Meeting invitation"),
+                Method::Cancel => tr("Meeting cancelled"),
+                Method::Reply => tr("Answer to your meeting"),
+                Method::Counter => tr("New time proposed"),
+                _ => tr("Calendar"),
             };
             ui.label(RichText::new(heading.to_uppercase()).size(11.0).strong().color(t::accent_text()));
-            ui.label(RichText::new(if ev.title.is_empty() { "(no title)" } else { ev.title.as_str() }).size(16.0).strong());
+            ui.label(RichText::new(if ev.title.is_empty() { tr("(no title)") } else { ev.title.as_str() }).size(16.0).strong());
             ui.label(time::span(ev.start, ev.end, ev.all_day));
             if let Some(rule) = &ev.recurrence {
                 ui.label(RichText::new(repeat_text(rule)).size(12.0).color(t::muted()));
             }
             if !ev.location.is_empty() {
-                ui.label(format!("Where: {}", ev.location));
+                ui.label(trf!("Where: {location}", location = ev.location));
             }
             if let Some(url) = ev.online.as_ref().map(|o| o.url.clone()).filter(|u| !u.is_empty())
                 && let Some(domain) = link_domain(&url)
             {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(format!("Online meeting at {domain}"));
-                    if ui.button("Open in the browser").on_hover_text(url.as_str()).clicked() {
+                    ui.label(trf!("Online meeting at {domain}", domain = domain));
+                    if ui.button(tr("Open in the browser")).on_hover_text(url.as_str()).clicked() {
                         actions.push(Action::Open(url.clone()));
                     }
                 });
             }
             if let Some(o) = &ev.organizer {
-                ui.label(RichText::new(format!("Organizer: {}", if o.name.is_empty() { o.email.clone() } else { format!("{} <{}>", o.name, o.email) })).size(12.5));
+                ui.label(RichText::new(trf!("Organizer: {organizer}", organizer = if o.name.is_empty() { o.email.clone() } else { format!("{} <{}>", o.name, o.email) })).size(12.5));
             }
             if !ev.attendees.is_empty() {
                 let names: Vec<String> = ev.attendees.iter().take(6).map(|a| if a.name.is_empty() { a.email.clone() } else { a.name.clone() }).collect();
-                let more = if ev.attendees.len() > 6 { format!(" and {} more", ev.attendees.len() - 6) } else { String::new() };
-                ui.label(RichText::new(format!("Guests: {}{more}", names.join(", "))).size(12.0).color(t::muted()));
+                let guests = if ev.attendees.len() > 6 {
+                    trf!("Guests: {names} and {count} more", names = names.join(", "), count = ev.attendees.len() - 6)
+                } else {
+                    trf!("Guests: {names}", names = names.join(", "))
+                };
+                ui.label(RichText::new(guests).size(12.0).color(t::muted()));
             }
-            ui.label(RichText::new(format!("Shows as {}", busy_label(ev.busy).to_lowercase())).size(12.0).color(t::faint()));
+            ui.label(RichText::new(trf!("Shows as {status}", status = busy_label(ev.busy).to_lowercase())).size(12.0).color(t::faint()));
 
             // What it changes, for an update of a meeting already in the calendar.
             if let (Method::Request, Some(old)) = (method, &existing) {
                 let diff = changes(old, &ev);
                 if !diff.is_empty() {
                     ui.add_space(4.0);
-                    ui.label(RichText::new("What changes:").color(t::warn()));
+                    ui.label(RichText::new(tr("What changes:")).color(t::warn()));
                     for d in diff {
                         ui.label(RichText::new(format!("• {d}")).size(12.0));
                     }
@@ -193,9 +199,11 @@ impl Pim {
                 let clashes = mailalm_engine::agenda::clashes(&all, a, b, &ev.uid, &TzRules);
                 ui.add_space(4.0);
                 if clashes.is_empty() {
-                    ui.label(RichText::new("No clash in your calendars, all accounts.").size(12.5).color(t::ok()));
+                    ui.label(RichText::new(tr("No clash in your calendars, all accounts.")).size(12.5).color(t::ok()));
                 } else {
-                    ui.label(RichText::new(format!("Clashes with {} event{}:", clashes.len(), if clashes.len() > 1 { "s" } else { "" })).color(t::warn()));
+                    let n = clashes.len();
+                    let heading = if n > 1 { trf!("Clashes with {count} events:", count = n) } else { trf!("Clashes with {count} event:", count = n) };
+                    ui.label(RichText::new(heading).color(t::warn()));
                     for c in clashes.iter().take(8) {
                         ui.label(RichText::new(format!("• {} — {} · {}", c.title, time::span(c.start, c.end, false), cx.name(c.account))).size(12.0));
                     }
@@ -209,93 +217,93 @@ impl Pim {
             let mine = existing.as_ref().and_then(|e| e.my_response).or_else(|| ev.attendee(&me).map(|a| a.response));
             match method {
                 Method::Request if i_organize => {
-                    ui.label(RichText::new("You organize this meeting.").color(t::muted()));
+                    ui.label(RichText::new(tr("You organize this meeting.")).color(t::muted()));
                 }
                 Method::Request => {
                     if let Some(m) = mine.filter(|m| *m != Response::NeedsAction) {
-                        ui.label(RichText::new(format!("Your answer so far: {}", response_label(m))).size(12.5));
+                        ui.label(RichText::new(trf!("Your answer so far: {response}", response = response_label(m))).size(12.5));
                     }
                     if existing.is_some() && matches!(provider, Some(Provider::Imap(_))) {
-                        if ui.button("Apply the update to my calendar").clicked() {
+                        if ui.button(tr("Apply the update to my calendar")).clicked() {
                             actions.push(Action::Apply(Method::Request));
                         }
                     } else if existing.is_some() {
-                        ui.label(RichText::new("The provider has updated the calendar already.").size(12.0).color(t::faint()));
+                        ui.label(RichText::new(tr("The provider has updated the calendar already.")).size(12.0).color(t::faint()));
                     }
                     ui.horizontal(|ui| {
-                        for (label, answer) in [("Accept", Response::Accepted), ("Tentative", Response::Tentative), ("Decline", Response::Declined)] {
+                        for (label, answer) in [(tr("Accept"), Response::Accepted), (tr("Tentative"), Response::Tentative), (tr("Decline"), Response::Declined)] {
                             if ui.add(Button::new(label)).clicked() {
                                 actions.push(Action::Respond(answer, None));
                             }
                         }
-                        if ui.button("Propose another time…").clicked() {
+                        if ui.button(tr("Propose another time…")).clicked() {
                             r.proposing = !r.proposing;
                         }
                     });
-                    ui.checkbox(&mut r.send, "Send a reply to the organizer");
+                    ui.checkbox(&mut r.send, tr("Send a reply to the organizer"));
                     if r.send {
-                        ui.add(TextEdit::singleline(&mut r.comment).desired_width(f32::INFINITY).hint_text("A note for the organizer (optional)"));
+                        ui.add(TextEdit::singleline(&mut r.comment).desired_width(f32::INFINITY).hint_text(tr("A note for the organizer (optional)")));
                     }
                     if r.proposing {
                         ui.horizontal(|ui| {
-                            ui.label("Propose");
+                            ui.label(tr("Propose"));
                             ui.add(TextEdit::singleline(&mut r.proposal_date).desired_width(100.0));
-                            ui.label("from");
+                            ui.label(tr("from"));
                             ui.add(TextEdit::singleline(&mut r.proposal_start).desired_width(56.0));
-                            ui.label("to");
+                            ui.label(tr("to"));
                             ui.add(TextEdit::singleline(&mut r.proposal_end).desired_width(56.0));
-                            if ui.button("Send the proposal").clicked() {
+                            if ui.button(tr("Send the proposal")).clicked() {
                                 match proposal(&r.proposal_date, &r.proposal_start, &r.proposal_end) {
                                     Some(p) => actions.push(Action::Respond(Response::Tentative, Some(p))),
-                                    None => r.problem = Some("Write the day as 2026-11-25 and the times as 14:00, the end after the start.".to_owned()),
+                                    None => r.problem = Some(tr("Write the day as 2026-11-25 and the times as 14:00, the end after the start.").to_owned()),
                                 }
                             }
                         });
                         if let Some(p) = &r.problem {
                             ui.label(RichText::new(p.as_str()).color(t::danger()));
                         }
-                        ui.label(RichText::new("Your answer is tentative meanwhile; the proposal always goes to the organizer.").size(11.5).color(t::faint()));
+                        ui.label(RichText::new(tr("Your answer is tentative meanwhile; the proposal always goes to the organizer.")).size(11.5).color(t::faint()));
                     }
                 }
                 Method::Cancel => match &existing {
                     Some(_) if !r.confirm => {
-                        if ui.button("Remove it from my calendar…").clicked() {
+                        if ui.button(tr("Remove it from my calendar…")).clicked() {
                             r.confirm = true;
                         }
                     }
                     Some(_) => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Remove this meeting from your calendar?").color(t::warn()));
-                            if ui.button("Remove").clicked() {
+                            ui.label(RichText::new(tr("Remove this meeting from your calendar?")).color(t::warn()));
+                            if ui.button(tr("Remove")).clicked() {
                                 actions.push(Action::Apply(Method::Cancel));
                             }
-                            if ui.button("Keep it").clicked() {
+                            if ui.button(tr("Keep it")).clicked() {
                                 r.confirm = false;
                             }
                         });
                     }
                     None => {
-                        ui.label(RichText::new("It is not in your calendar.").color(t::faint()));
+                        ui.label(RichText::new(tr("It is not in your calendar.")).color(t::faint()));
                     }
                 },
                 Method::Reply => {
                     for a in ev.attendees.iter().take(10) {
-                        ui.label(format!("{} {}", if a.name.is_empty() { &a.email } else { &a.name }, response_label(a.response)));
+                        ui.label(trf!("{name} {response}", name = if a.name.is_empty() { &a.email } else { &a.name }, response = response_label(a.response)));
                     }
                     match (&existing, provider) {
                         (Some(e), Some(Provider::Imap(_))) if e.is_organizer => {
-                            if ui.button("Record the answer in my calendar").clicked() {
+                            if ui.button(tr("Record the answer in my calendar")).clicked() {
                                 actions.push(Action::Apply(Method::Reply));
                             }
                         }
                         (Some(_), Some(Provider::Outlook | Provider::Gmail)) => {
-                            ui.label(RichText::new("The provider records the answer in the calendar by itself.").size(12.0).color(t::faint()));
+                            ui.label(RichText::new(tr("The provider records the answer in the calendar by itself.")).size(12.0).color(t::faint()));
                         }
                         _ => {}
                     }
                 }
                 Method::Counter => {
-                    ui.label(RichText::new("To take this time, change the meeting's time in the calendar: its guests are told.").size(12.0).color(t::faint()));
+                    ui.label(RichText::new(tr("To take this time, change the meeting's time in the calendar: its guests are told.")).size(12.0).color(t::faint()));
                 }
                 _ => {}
             }
@@ -312,17 +320,17 @@ impl Pim {
                     let command = PimCommand::Respond { event: Box::new(ev.clone()), answer, send: r.send || proposal.is_some(), comment: r.comment.clone(), proposal };
                     r.done = Some(if cx.send(key.account, command) {
                         match (proposal, r.send) {
-                            (Some(_), _) => "Your proposal is being sent to the organizer.".to_owned(),
-                            (None, true) => format!("Your answer ({}) is being sent to the organizer.", response_label(answer)),
-                            (None, false) => format!("Answered {} without telling the organizer.", response_label(answer)),
+                            (Some(_), _) => tr("Your proposal is being sent to the organizer.").to_owned(),
+                            (None, true) => trf!("Your answer ({response}) is being sent to the organizer.", response = response_label(answer)),
+                            (None, false) => trf!("Answered {response} without telling the organizer.", response = response_label(answer)),
                         }
                     } else {
-                        "The account is not running: nothing was done.".to_owned()
+                        tr("The account is not running: nothing was done.").to_owned()
                     });
                 }
                 Action::Apply(method) => {
                     let events = r.invitation.events.clone();
-                    r.done = Some(if cx.send(key.account, PimCommand::ApplyInvitation { method, events }) { "Your calendar is being updated.".to_owned() } else { "The account is not running: nothing was done.".to_owned() });
+                    r.done = Some(if cx.send(key.account, PimCommand::ApplyInvitation { method, events }) { tr("Your calendar is being updated.").to_owned() } else { tr("The account is not running: nothing was done.").to_owned() });
                 }
                 Action::Open(url) => opened = Some(open_link(&url)),
             }

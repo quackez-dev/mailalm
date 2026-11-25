@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use egui::{Color32, Theme, ThemePreference};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::tr;
+
 /// The theme the user chose.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
@@ -20,11 +22,12 @@ pub enum ThemeChoice {
 impl ThemeChoice {
     pub const ALL: [ThemeChoice; 3] = [ThemeChoice::Dark, ThemeChoice::Light, ThemeChoice::System];
 
+    /// Its name, in the interface's language.
     pub fn label(self) -> &'static str {
         match self {
-            ThemeChoice::Dark => "Dark",
-            ThemeChoice::Light => "Light",
-            ThemeChoice::System => "As Windows is set",
+            ThemeChoice::Dark => tr("Dark"),
+            ThemeChoice::Light => tr("Light"),
+            ThemeChoice::System => tr("As Windows is set"),
         }
     }
 }
@@ -48,6 +51,10 @@ struct Palette {
     warn: Color32,
     warn_bg: Color32,
     danger: Color32,
+    /// Behind an alert (a sender failing DMARC).
+    danger_bg: Color32,
+    /// Time taken as "out of office".
+    away: Color32,
 }
 
 const DARK: Palette = Palette {
@@ -68,6 +75,8 @@ const DARK: Palette = Palette {
     warn: Color32::from_rgb(0xf4, 0xc4, 0x6a),
     warn_bg: Color32::from_rgb(0x3b, 0x2c, 0x10),
     danger: Color32::from_rgb(0xff, 0x9d, 0x96),
+    danger_bg: Color32::from_rgb(0x3b, 0x16, 0x16),
+    away: Color32::from_rgb(0xb8, 0x93, 0xff),
 };
 
 const LIGHT: Palette = Palette {
@@ -88,6 +97,8 @@ const LIGHT: Palette = Palette {
     warn: Color32::from_rgb(0x8f, 0x5b, 0x00),
     warn_bg: Color32::from_rgb(0xfb, 0xef, 0xd2),
     danger: Color32::from_rgb(0xb8, 0x32, 0x27),
+    danger_bg: Color32::from_rgb(0xfb, 0xe4, 0xe1),
+    away: Color32::from_rgb(0x6b, 0x3f, 0xc0),
 };
 
 /// The light theme is shown now.
@@ -147,6 +158,12 @@ pub fn warn_bg() -> Color32 {
 }
 pub fn danger() -> Color32 {
     palette().danger
+}
+pub fn danger_bg() -> Color32 {
+    palette().danger_bg
+}
+pub fn away() -> Color32 {
+    palette().away
 }
 
 /// An account's colour.

@@ -23,6 +23,7 @@ use crate::accounts::{AccountForm, FormResult, Secret};
 use crate::agenda::{Ctx, Pim, PimPage};
 use crate::attachments::{Review, ReviewAction};
 use crate::compose::{self, Compose};
+use crate::i18n::{tr, tr_key, trf};
 use crate::icons::{self, Icon};
 use crate::local::{LOCAL, LocalBox};
 use crate::mailbox::{Mailboxes, MessageKey, Outcome, Reading};
@@ -101,7 +102,7 @@ const SERVER_HIT: usize = usize::MAX - 1;
 #[derive(Clone, Copy)]
 enum Row {
     Group(Group),
-    /// A title of its own ("FROM THE SERVER").
+    /// A title of its own ("FROM THE SERVER"), in English: shown with `tr`.
     Heading(&'static str),
     /// `source` indexes `ListCache::sources` (or is [`HIT`] or [`SERVER_HIT`] for a search hit);
     /// `pos` is the summary's place in that folder's list (or in the hits).
@@ -184,6 +185,8 @@ impl MailApp {
         let (sending, schedule_problem) = sending::Sending::load();
         let problem = problem.or(schedule_problem);
         t::apply(ctx, settings.theme);
+        crate::i18n::set_language(settings.language);
+        mailalm_compose::set_translator(crate::i18n::tr);
         let wake_ctx = ctx.clone();
         let wake: mailalm_engine::Wake = Arc::new(move || wake_ctx.request_repaint());
         let zones: mailalm_engine::Zones = Arc::new(crate::zones::TzRules);
@@ -276,23 +279,23 @@ impl MailApp {
     fn view_name(&self) -> String {
         match &self.view {
             View::Folder(id, folder) => {
-                let account = if *id == LOCAL { crate::local::LOCAL_NAME } else { self.account(*id).map_or("", |a| a.name.as_str()) }.to_owned();
+                let account = if *id == LOCAL { tr(crate::local::LOCAL_NAME) } else { self.account(*id).map_or("", |a| a.name.as_str()) }.to_owned();
                 let folder = self
                     .folder_path(*id, folder)
                     .and_then(|p| self.boxes.account(*id).and_then(|s| s.folder(&p)).map(|f| display_name(f.role, f.name())))
-                    .unwrap_or_else(|| "Inbox".to_owned());
+                    .unwrap_or_else(|| tr("Inbox").to_owned());
                 format!("{account} · {folder}")
             }
-            View::Unified => "Unified inbox".to_owned(),
-            View::Flagged => "Flagged, all accounts".to_owned(),
+            View::Unified => tr("Unified inbox").to_owned(),
+            View::Flagged => tr("Flagged, all accounts").to_owned(),
             View::Search => match &self.search_state {
                 Some(s) => match &s.name {
-                    Some(name) => format!("Search folder: {name}"),
-                    None => format!("Search: {}", s.query),
+                    Some(name) => trf!("Search folder: {name}", name = name),
+                    None => trf!("Search: {query}", query = s.query),
                 },
-                None => "Search".to_owned(),
+                None => tr("Search").to_owned(),
             },
-            View::Snoozed => "Snoozed and follow-ups".to_owned(),
+            View::Snoozed => tr("Snoozed and follow-ups").to_owned(),
         }
     }
 
@@ -466,7 +469,7 @@ impl MailApp {
         entries.extend(server);
         for (n, (date, source, pos)) in entries.into_iter().enumerate() {
             if n == first_server && source == SERVER_HIT {
-                rows.push(Row::Heading("FROM THE SERVER"));
+                rows.push(Row::Heading(tr_key("FROM THE SERVER")));
                 tops.push(y);
                 y += GROUP_HEIGHT;
                 last_group = None;
@@ -568,22 +571,23 @@ impl MailApp {
 
     fn move_selected(&mut self, role: FolderRole) {
         let Some(key) = self.selected.clone() else {
-            self.say("Select a message first.");
+            self.say(tr("Select a message first."));
             return;
         };
         let target = self.boxes.account(key.account).and_then(|s| s.folder_with_role(role)).map(|f| f.path.clone());
         match target {
-            Some(to) if to == key.folder => self.say("The message is already there."),
+            Some(to) if to == key.folder => self.say(tr("The message is already there.")),
             Some(to) => self.move_to(&key, to),
             None => {
-                let what = match role {
-                    FolderRole::Archive => "an Archive",
-                    FolderRole::Junk => "a Junk",
-                    FolderRole::Trash => "a Trash",
-                    FolderRole::Inbox => "an Inbox",
-                    _ => "such a",
+                // One whole sentence per folder, for the translation.
+                let text = match role {
+                    FolderRole::Archive => tr("This account has no Archive folder."),
+                    FolderRole::Junk => tr("This account has no Junk folder."),
+                    FolderRole::Trash => tr("This account has no Trash folder."),
+                    FolderRole::Inbox => tr("This account has no Inbox."),
+                    _ => tr("This account has no such folder."),
                 };
-                self.say(format!("This account has no {what} folder."));
+                self.say(text);
             }
         }
     }
@@ -594,7 +598,7 @@ impl MailApp {
     /// moves the message.
     fn junk_action(&mut self, n: usize) {
         let Some(key) = self.selected.clone() else {
-            self.say("Select a message first.");
+            self.say(tr("Select a message first."));
             return;
         };
         let provider = self.account(key.account).map(|a| a.provider);
@@ -606,26 +610,24 @@ impl MailApp {
             (1, _) => self.move_selected(FolderRole::Inbox),
             (2, Some(Provider::Gmail)) => self.set_sender(&key, true),
             (3, Some(Provider::Gmail)) => self.set_sender(&key, false),
-            (2, Some(Provider::Outlook)) => self.say(
-                "Microsoft's API cannot change Outlook.com's blocked senders: block this sender in Outlook.com's settings (Mail, Junk email), or make a rule that moves its messages to Junk (Move, Create a rule from this message).",
-            ),
+            (2, Some(Provider::Outlook)) => self.say(tr("Microsoft's API cannot change Outlook.com's blocked senders: block this sender in Outlook.com's settings (Mail, Junk email), or make a rule that moves its messages to Junk (Move, Create a rule from this message).")),
             (2, Some(Provider::Imap(_))) => {
-                self.say("An IMAP server keeps no blocked senders: make a MailALM rule that moves this sender's messages to Junk.");
+                self.say(tr("An IMAP server keeps no blocked senders: make a MailALM rule that moves this sender's messages to Junk."));
                 self.rule_from_message();
             }
-            (_, None) => self.say("Mail kept on this PC has no junk folder."),
-            (_, _) => self.say("Only a blocked sender can be unblocked: Settings, Rules lists the rules about senders."),
+            (_, None) => self.say(tr("Mail kept on this PC has no junk folder.")),
+            (_, _) => self.say(tr("Only a blocked sender can be unblocked: Settings, Rules lists the rules about senders.")),
         }
     }
 
     fn mark_junk(&mut self, key: &MessageKey, junk: bool) {
         let in_folder = self.boxes.account(key.account).and_then(|s| s.folder(&key.folder)).map(|f| f.role);
         if !junk && in_folder != Some(FolderRole::Junk) {
-            self.say("Only a message in Junk can be marked as not junk.");
+            self.say(tr("Only a message in Junk can be marked as not junk."));
             return;
         }
         if junk && in_folder == Some(FolderRole::Junk) {
-            self.say("The message is already in Junk.");
+            self.say(tr("The message is already in Junk."));
             return;
         }
         let gmail = self.account(key.account).is_some_and(|a| a.provider == Provider::Gmail);
@@ -633,10 +635,10 @@ impl MailApp {
         self.send(key.account, Command::Apply(Change::MarkJunk { folder: key.folder.clone(), uids: vec![key.uid], junk }));
         self.drop_hit(key);
         self.say(match (gmail, junk) {
-            (true, true) => "Reported to Gmail as spam, and moved to Spam.",
-            (true, false) => "Reported to Gmail as not spam, and moved back to the Inbox.",
-            (false, true) => "Reported to Outlook.com as junk, and moved to Junk.",
-            (false, false) => "Reported to Outlook.com as not junk, and moved back to the Inbox.",
+            (true, true) => tr("Reported to Gmail as spam, and moved to Spam."),
+            (true, false) => tr("Reported to Gmail as not spam, and moved back to the Inbox."),
+            (false, true) => tr("Reported to Outlook.com as junk, and moved to Junk."),
+            (false, false) => tr("Reported to Outlook.com as not junk, and moved back to the Inbox."),
         });
     }
 
@@ -651,7 +653,7 @@ impl MailApp {
             .map(|s| s.from.address.trim().to_owned())
             .filter(|a| mailalm_mime::address_is_valid(a));
         let Some(from) = from else {
-            self.say("This message has no sender address.");
+            self.say(tr("This message has no sender address."));
             return;
         };
         let in_junk = self.boxes.account(key.account).and_then(|s| s.folder(&key.folder)).is_some_and(|f| f.role == FolderRole::Junk);
@@ -660,13 +662,13 @@ impl MailApp {
             if !in_junk {
                 self.mark_junk(key, true);
             }
-            self.say(format!("{from} is blocked: a Gmail filter sends its messages to Spam. Settings lists the blocked senders."));
+            self.say(trf!("{address} is blocked: a Gmail filter sends its messages to Spam. Settings lists the blocked senders.", address = from));
         } else {
             self.engine.send(key.account, Command::Senders(SenderCommand::Allow(from.clone())));
             if in_junk {
                 self.mark_junk(key, false);
             }
-            self.say(format!("Gmail will never send {from}'s messages to Spam (a Gmail filter). Settings lists the allowed senders."));
+            self.say(trf!("Gmail will never send {address}'s messages to Spam (a Gmail filter). Settings lists the allowed senders.", address = from));
         }
     }
 
@@ -685,14 +687,14 @@ impl MailApp {
 
     fn delete_selected(&mut self) {
         let Some(key) = self.selected.clone() else {
-            self.say("Select a message first.");
+            self.say(tr("Select a message first."));
             return;
         };
         let state = self.boxes.account(key.account);
         let in_trash = state.and_then(|s| s.folder(&key.folder)).is_some_and(|f| f.role == FolderRole::Trash);
         if in_trash && self.account(key.account).is_some_and(|a| a.provider == Provider::Gmail) {
             // MailALM asks Google only for gmail.modify, which cannot delete for good.
-            self.say("Gmail empties its Trash by itself after 30 days: MailALM does not delete Gmail messages for good.");
+            self.say(tr("Gmail empties its Trash by itself after 30 days: MailALM does not delete Gmail messages for good."));
             return;
         }
         let trash = state.and_then(|s| s.folder_with_role(FolderRole::Trash)).map(|f| f.path.clone());
@@ -705,7 +707,7 @@ impl MailApp {
 
     fn set_flag(&mut self, flagged: bool) {
         let Some(key) = self.selected.clone() else {
-            self.say("Select a message first.");
+            self.say(tr("Select a message first."));
             return;
         };
         self.send(key.account, Command::Apply(Change::SetFlagged { folder: key.folder.clone(), uids: vec![key.uid], flagged }));
@@ -714,7 +716,7 @@ impl MailApp {
 
     fn set_seen(&mut self, seen: bool) {
         let Some(key) = self.selected.clone() else {
-            self.say("Select a message first.");
+            self.say(tr("Select a message first."));
             return;
         };
         self.send(key.account, Command::Apply(Change::SetSeen { folder: key.folder.clone(), uids: vec![key.uid], seen }));
@@ -743,11 +745,11 @@ impl MailApp {
 
     fn reply(&mut self, all: bool, forward: bool) {
         let Some(r) = &self.reading else {
-            self.say("Select a message first.");
+            self.say(tr("Select a message first."));
             return;
         };
         let Some(parsed) = &r.parsed else {
-            self.say("The message is still loading.");
+            self.say(tr("The message is still loading."));
             return;
         };
         // Mail kept on this PC is answered from the focused account (or the first one).
@@ -755,7 +757,7 @@ impl MailApp {
             match self.ws.focused_account().or_else(|| self.ws.accounts().first()) {
                 Some(a) => a.id,
                 None => {
-                    self.say("Add an account to answer from.");
+                    self.say(tr("Add an account to answer from."));
                     return;
                 }
             }
@@ -769,19 +771,22 @@ impl MailApp {
         let html = self.message_view.as_ref().filter(|v| v.key == r.key).and_then(MessageView::html);
         let original = compose::document_of(&parsed.text, html);
         let (o, doc) = if forward {
+            // The header written in the forward follows the interface's language, except its first
+            // line, which mailalm_mime and the signature's placement recognise (Gmail keeps it in
+            // English in every language too).
             let mut header = vec![
                 "---------- Forwarded message ----------".to_owned(),
-                format!("From: {}", format_person(&parsed.from)),
-                format!("Date: {long}"),
-                format!("Subject: {}", parsed.subject),
-                format!("To: {}", people(&parsed.to)),
+                trf!("From: {sender}", sender = format_person(&parsed.from)),
+                trf!("Date: {date}", date = long),
+                trf!("Subject: {subject}", subject = parsed.subject),
+                trf!("To: {recipients}", recipients = people(&parsed.to)),
             ];
             if !parsed.cc.is_empty() {
-                header.push(format!("Cc: {}", people(&parsed.cc)));
+                header.push(trf!("Cc: {recipients}", recipients = people(&parsed.cc)));
             }
             (mailalm_mime::forward(parsed, &me, &long), compose::forward_document(&header, original))
         } else {
-            let attribution = format!("On {long}, {} wrote:", parsed.from.display());
+            let attribution = trf!("On {date}, {name} wrote:", date = long, name = parsed.from.display());
             (mailalm_mime::reply(parsed, &me, all, &format!("On {long},")), compose::reply_document(&attribution, original))
         };
         self.compose(account, o, Some(doc));
@@ -806,7 +811,7 @@ impl MailApp {
         }
         if new {
             self.ws.add_account(account.clone());
-            self.say(format!("{} was added. Its mail is being synced.", account.name));
+            self.say(trf!("{name} was added. Its mail is being synced.", name = account.name));
         } else {
             // The workspace keeps the focus; only the account's details change.
             let focus = self.ws.focus();
@@ -820,7 +825,7 @@ impl MailApp {
                     self.ws.focus_unified();
                 }
             }
-            self.say(format!("{} was saved.", account.name));
+            self.say(trf!("{name} was saved.", name = account.name));
         }
         self.engine.start(account.clone());
         if new {
@@ -855,7 +860,7 @@ impl MailApp {
             Some(a) => View::Folder(a.id, None),
             None => View::Unified,
         };
-        self.say(format!("{name} was removed from MailALM. Its mail on the server is untouched."));
+        self.say(trf!("{name} was removed from MailALM. Its mail on the server is untouched.", name = name));
     }
 }
 
@@ -938,9 +943,9 @@ impl MailApp {
             _ => u32::try_from(self.list.unread).unwrap_or(u32::MAX),
         };
         let title = match self.page {
-            _ if self.ws.accounts().is_empty() => "No account yet".to_owned(),
+            _ if self.ws.accounts().is_empty() => tr("No account yet").to_owned(),
             Page::Pim(p) => p.title().to_owned(),
-            _ => format!("{} · {unread} unread", self.view_name()),
+            _ => trf!("{view} · {count} unread", view = self.view_name(), count = unread),
         };
         egui::Panel::top("title-bar")
             .exact_size(34.0)
@@ -961,27 +966,27 @@ impl MailApp {
                         let size = vec2(44.0, 34.0);
                         let hover = Color32::from_rgba_unmultiplied(255, 255, 255, 40);
                         let ctx = ui.ctx().clone();
-                        if icons::button(ui, Icon::Close, size, t::title_text(), Color32::from_rgb(0xc4, 0x2b, 0x1c), "Close").clicked() {
+                        if icons::button(ui, Icon::Close, size, t::title_text(), Color32::from_rgb(0xc4, 0x2b, 0x1c), tr("Close")).clicked() {
                             ctx.send_viewport_cmd(ViewportCommand::Close);
                         }
-                        if icons::button(ui, Icon::Maximize, size, t::title_text(), hover, "Maximize or restore").clicked() {
+                        if icons::button(ui, Icon::Maximize, size, t::title_text(), hover, tr("Maximize or restore")).clicked() {
                             window::toggle_maximized(&ctx);
                         }
-                        if icons::button(ui, Icon::Minimize, size, t::title_text(), hover, "Minimize").clicked() {
+                        if icons::button(ui, Icon::Minimize, size, t::title_text(), hover, tr("Minimize")).clicked() {
                             ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
                         }
                         ui.add_space(6.0);
                         let small = vec2(32.0, 28.0);
-                        if icons::button(ui, Icon::Settings, small, t::title_text(), hover, "Settings").clicked() {
+                        if icons::button(ui, Icon::Settings, small, t::title_text(), hover, tr("Settings")).clicked() {
                             self.page = if self.page == Page::Settings { Page::Mail } else { Page::Settings };
                             self.create_menu = None;
                         }
-                        if icons::button(ui, Icon::Refresh, small, t::title_text(), hover, "Send and receive all").clicked() {
+                        if icons::button(ui, Icon::Refresh, small, t::title_text(), hover, tr("Send and receive all")).clicked() {
                             let ids: Vec<AccountId> = self.ws.accounts().iter().map(|a| a.id).collect();
                             for id in ids {
                                 self.engine.send(id, Command::SyncAll);
                             }
-                            self.say("Checking every account for new mail…");
+                            self.say(tr("Checking every account for new mail…"));
                         }
                         ui.centered_and_justified(|ui| {
                             ui.add(egui::Label::new(RichText::new(title).color(t::title_text()).size(12.0)).selectable(false).truncate());
@@ -1020,34 +1025,34 @@ impl MailApp {
                     }
                     self.new_mail_button(ui);
                     separator(ui);
-                    if flat(ui, "Reply").clicked() {
+                    if flat(ui, tr("Reply")).clicked() {
                         self.reply(false, false);
                     }
-                    if flat(ui, "Reply all").clicked() {
+                    if flat(ui, tr("Reply all")).clicked() {
                         self.reply(true, false);
                     }
-                    if flat(ui, "Forward").clicked() {
+                    if flat(ui, tr("Forward")).clicked() {
                         self.reply(false, true);
                     }
                     separator(ui);
-                    if flat(ui, "Archive").clicked() {
+                    if flat(ui, tr("Archive")).clicked() {
                         self.move_selected(FolderRole::Archive);
                     }
-                    if flat(ui, "Delete").clicked() {
+                    if flat(ui, tr("Delete")).clicked() {
                         self.delete_selected();
                     }
                     let mut junk: Option<usize> = None;
-                    let _ = ui.menu_button(("Junk", icons::atom(Icon::ChevronDown)), |ui| {
-                        for (n, item) in ["Report junk", "Not junk", "Block sender", "Never block sender"].into_iter().enumerate() {
+                    let _ = ui.menu_button((tr("Junk"), icons::atom(Icon::ChevronDown)), |ui| {
+                        for (n, item) in [tr("Report junk"), tr("Not junk"), tr("Block sender"), tr("Never block sender")].into_iter().enumerate() {
                             if ui.button(item).clicked() {
                                 junk = Some(n);
                                 ui.close();
                             }
                         }
                         ui.separator();
-                        ui.label(RichText::new("Outlook: reported to Outlook.com, which moves the message.").size(11.0).color(t::muted()));
-                        ui.label(RichText::new("Gmail: reported to Gmail as spam; senders are blocked or allowed by Gmail filters.").size(11.0).color(t::muted()));
-                        ui.label(RichText::new("IMAP: moved to the server's Junk folder.").size(11.0).color(t::muted()));
+                        ui.label(RichText::new(tr("Outlook: reported to Outlook.com, which moves the message.")).size(11.0).color(t::muted()));
+                        ui.label(RichText::new(tr("Gmail: reported to Gmail as spam; senders are blocked or allowed by Gmail filters.")).size(11.0).color(t::muted()));
+                        ui.label(RichText::new(tr("IMAP: moved to the server's Junk folder.")).size(11.0).color(t::muted()));
                     });
                     if let Some(n) = junk {
                         self.junk_action(n);
@@ -1056,27 +1061,27 @@ impl MailApp {
                     self.move_menu(ui);
                     self.snooze_menu(ui);
                     let mut flag: Option<bool> = None;
-                    let _ = ui.menu_button(("Flag", icons::atom(Icon::ChevronDown)), |ui| {
-                        if ui.button("Flag").clicked() {
+                    let _ = ui.menu_button((tr("Flag"), icons::atom(Icon::ChevronDown)), |ui| {
+                        if ui.button(tr("Flag the message")).clicked() {
                             flag = Some(true);
                             ui.close();
                         }
-                        if ui.button("Clear the flag").clicked() {
+                        if ui.button(tr("Clear the flag")).clicked() {
                             flag = Some(false);
                             ui.close();
                         }
                         ui.separator();
                         self.follow_up_menu(ui);
                         ui.separator();
-                        ui.label(RichText::new("Categories").color(t::faint()))
-                            .on_hover_text("Setting Outlook categories and Gmail labels on a message isn't possible in MailALM yet: the search finds them (category:name).");
+                        ui.label(RichText::new(tr("Categories")).color(t::faint()))
+                            .on_hover_text(tr("Setting Outlook categories and Gmail labels on a message isn't possible in MailALM yet: the search finds them (category:name)."));
                     });
                     if let Some(f) = flag {
                         self.set_flag(f);
                     }
                     let mut more: Option<usize> = None;
-                    let _ = ui.menu_button(("More", icons::atom(Icon::ChevronDown)), |ui| {
-                        for (n, item) in ["Mark as read", "Mark as unread", "Sync this folder now"].into_iter().enumerate() {
+                    let _ = ui.menu_button((tr("More"), icons::atom(Icon::ChevronDown)), |ui| {
+                        for (n, item) in [tr("Mark as read"), tr("Mark as unread"), tr("Sync this folder now")].into_iter().enumerate() {
                             if ui.button(item).clicked() {
                                 more = Some(n);
                                 ui.close();
@@ -1114,9 +1119,9 @@ impl MailApp {
         let mut chosen: Option<String> = None;
         let mut make_rule = false;
         let can_rule = account.is_some_and(|a| a != LOCAL);
-        let _ = ui.menu_button(("Move", icons::atom(Icon::ChevronDown)), |ui| {
+        let _ = ui.menu_button((tr("Move"), icons::atom(Icon::ChevronDown)), |ui| {
             if folders.is_empty() {
-                ui.label(RichText::new("Select a message first.").color(t::faint()));
+                ui.label(RichText::new(tr("Select a message first.")).color(t::faint()));
                 return;
             }
             ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
@@ -1130,7 +1135,7 @@ impl MailApp {
             });
             if can_rule {
                 ui.separator();
-                if ui.button("Create a rule from this message…").on_hover_text("A rule for this sender's messages, in Settings, Rules").clicked() {
+                if ui.button(tr("Create a rule from this message…")).on_hover_text(tr("A rule for this sender's messages, in Settings, Rules")).clicked() {
                     make_rule = true;
                     ui.close();
                 }
@@ -1169,11 +1174,11 @@ impl MailApp {
                 let text_x = main_rect.left() + 30.0;
                 match &sender {
                     Some(name) => {
-                        p.text(pos2(text_x, main_rect.center().y - 7.0), Align2::LEFT_CENTER, "New mail", FontId::proportional(13.5), t::on_accent());
+                        p.text(pos2(text_x, main_rect.center().y - 7.0), Align2::LEFT_CENTER, tr("New mail"), FontId::proportional(13.5), t::on_accent());
                         p.text(pos2(text_x, main_rect.center().y + 8.0), Align2::LEFT_CENTER, name, FontId::proportional(11.0), t::on_accent());
                     }
                     None => {
-                        p.text(pos2(text_x, main_rect.center().y), Align2::LEFT_CENTER, "New mail", FontId::proportional(13.5), t::on_accent());
+                        p.text(pos2(text_x, main_rect.center().y), Align2::LEFT_CENTER, tr("New mail"), FontId::proportional(13.5), t::on_accent());
                     }
                 }
                 icons::paint(p, arrow_rect, Icon::ChevronDown, t::on_accent());
@@ -1181,10 +1186,10 @@ impl MailApp {
             })
             .inner;
         let main = match &sender {
-            Some(name) => main.on_hover_text(format!("New mail from {name}")),
-            None => main.on_hover_text("New mail: choose the account to send from"),
+            Some(name) => main.on_hover_text(trf!("New mail from {name}", name = name)),
+            None => main.on_hover_text(tr("New mail: choose the account to send from")),
         };
-        let arrow = arrow.on_hover_text("New mail from another account, event, meeting, task or contact");
+        let arrow = arrow.on_hover_text(tr("New mail from another account, event, meeting, task or contact"));
         if main.clicked() {
             match action {
                 NewMail::From(id) => self.new_mail_from(id),
@@ -1233,36 +1238,37 @@ impl MailApp {
                         ui.set_width(330.0);
                         ui.spacing_mut().item_spacing.y = 0.0;
                         let (heading, color) = match focused {
-                            Some(_) => ("NEW MAIL FROM", t::faint()),
-                            None => ("CHOOSE THE ACCOUNT TO SEND FROM", t::accent_text()),
+                            Some(_) => (tr("NEW MAIL FROM"), t::faint()),
+                            None => (tr("CHOOSE THE ACCOUNT TO SEND FROM"), t::accent_text()),
                         };
                         ui.add_space(4.0);
                         ui.label(RichText::new(heading).size(11.0).strong().color(color));
                         ui.add_space(4.0);
                         for (id, name, address, dot) in &accounts {
                             let current = focused == Some(*id);
-                            let right = if current { "current" } else { "" };
+                            let right = if current { tr("current") } else { "" };
                             if menu_row(ui, Some(*dot), name, address, right, current).clicked() {
                                 from = Some(*id);
                             }
                         }
-                        if accounts.is_empty() && menu_row(ui, None, "Add an account…", "", "", false).clicked() {
+                        if accounts.is_empty() && menu_row(ui, None, tr("Add an account…"), "", "", false).clicked() {
                             chosen = Some("add".to_owned());
                         }
                         for (id, i, name, account) in &templates {
                             let detail = if focused.is_none() { account.as_str() } else { "" };
-                            if menu_row(ui, None, &format!("From the template {name}"), detail, "", false).clicked() {
+                            if menu_row(ui, None, &trf!("From the template {name}", name = name), detail, "", false).clicked() {
                                 template = Some((*id, *i));
                             }
                         }
-                        if templates.is_empty() && !accounts.is_empty() && menu_row(ui, None, "New mail from a template…", "", "", false).clicked() {
-                            chosen = Some("No template yet: add them in Settings, Signatures, templates and quick replies.".to_owned());
+                        if templates.is_empty() && !accounts.is_empty() && menu_row(ui, None, tr("New mail from a template…"), "", "", false).clicked() {
+                            chosen = Some(tr("No template yet: add them in Settings, Signatures, templates and quick replies.").to_owned());
                         }
                         ui.add_space(4.0);
                         ui.separator();
                         ui.add_space(4.0);
-                        for (label, keys) in [("New event", "Ctrl+Shift+E"), ("New meeting", ""), ("New task", "Ctrl+Shift+K"), ("New contact", "")] {
-                            if menu_row(ui, None, label, "", keys, false).clicked() {
+                        // The labels stay English (`create` is matched below): shown with `tr`.
+                        for (label, keys) in [(tr_key("New event"), "Ctrl+Shift+E"), (tr_key("New meeting"), ""), (tr_key("New task"), "Ctrl+Shift+K"), (tr_key("New contact"), "")] {
+                            if menu_row(ui, None, tr(label), "", keys, false).clicked() {
                                 create = Some(label);
                             }
                         }
@@ -1274,7 +1280,7 @@ impl MailApp {
                 "New event" => self.new_event(false),
                 "New meeting" => self.new_event(true),
                 "New task" => self.new_task(),
-                _ => self.say("Contacts are read from Outlook and Google for now: add one there. Adding contacts in MailALM arrives in phase 8."),
+                _ => self.say(tr("Contacts are read from Outlook and Google for now: add one there. Adding contacts in MailALM arrives in phase 8.")),
             }
             self.create_menu = None;
         } else if let Some(id) = from {
@@ -1354,15 +1360,17 @@ fn folder_row(ui: &mut Ui, indent: f32, selected: bool, label: &str, count: u32)
     response
 }
 
-/// The name a folder is shown with: the usual ones in English, the others as the server names them.
+/// The name a folder is shown with: the usual ones in the interface's language, the others as the
+/// server names them.
 fn display_name(role: FolderRole, name: &str) -> String {
     match role {
-        FolderRole::Inbox => "Inbox".to_owned(),
-        FolderRole::Drafts => "Drafts".to_owned(),
-        FolderRole::Sent => "Sent".to_owned(),
-        FolderRole::Archive => "Archive".to_owned(),
-        FolderRole::Junk => "Junk".to_owned(),
-        FolderRole::Trash => "Trash".to_owned(),
+        FolderRole::Inbox => tr("Inbox").to_owned(),
+        FolderRole::Drafts => tr("Drafts").to_owned(),
+        FolderRole::Sent => tr("Sent").to_owned(),
+        // "Archives" (as Thunderbird names it): "Archive" is the button's verb.
+        FolderRole::Archive => tr("Archives").to_owned(),
+        FolderRole::Junk => tr("Junk").to_owned(),
+        FolderRole::Trash => tr("Trash").to_owned(),
         FolderRole::Other => name.to_owned(),
     }
 }
@@ -1387,7 +1395,7 @@ impl MailApp {
             .show(ui, |ui| {
                 egui::Panel::bottom("modules").resizable(false).frame(Frame::new().inner_margin(Margin::symmetric(0, 6))).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        let pages = [("Mail", Page::Mail), ("Calendar", Page::Pim(PimPage::Calendar)), ("Contacts", Page::Pim(PimPage::Contacts)), ("Tasks", Page::Pim(PimPage::Tasks))];
+                        let pages = [(tr("Mail"), Page::Mail), (tr("Calendar"), Page::Pim(PimPage::Calendar)), (tr("Contacts"), Page::Pim(PimPage::Contacts)), (tr("Tasks"), Page::Pim(PimPage::Tasks))];
                         for (label, page) in pages {
                             let active = self.page == page || (page == Page::Mail && self.page == Page::Settings);
                             if ui.add(Button::selectable(active, label)).clicked() && !active {
@@ -1405,20 +1413,20 @@ impl MailApp {
                         return;
                     }
                     if self.ws.accounts().is_empty() {
-                        section(ui, "ACCOUNTS");
-                        if ui.button("Add an account…").clicked() {
+                        section(ui, tr("ACCOUNTS"));
+                        if ui.button(tr("Add an account…")).clicked() {
                             self.form = Some(AccountForm::new());
                         }
                         self.local_pane(ui);
                         return;
                     }
                     if self.ws.unified_available() {
-                        section(ui, "FAVORITES");
+                        section(ui, tr("FAVORITES"));
                         let unread: u32 = self.ws.accounts().iter().filter_map(|a| self.boxes.account(a.id)).map(|s| s.unread_inbox()).sum();
-                        if folder_row(ui, 10.0, self.view == View::Unified, "Unified inbox", unread).clicked() {
+                        if folder_row(ui, 10.0, self.view == View::Unified, tr("Unified inbox"), unread).clicked() {
                             self.focus_unified();
                         }
-                        if folder_row(ui, 10.0, self.view == View::Flagged, "Flagged, all accounts", 0).clicked() {
+                        if folder_row(ui, 10.0, self.view == View::Flagged, tr("Flagged, all accounts"), 0).clicked() {
                             self.ws.focus_unified();
                             self.set_view(View::Flagged);
                         }
@@ -1429,9 +1437,9 @@ impl MailApp {
                     }
                     self.saved_searches_pane(ui);
                     let snoozed: usize = self.boxes.accounts.values().map(|s| s.snoozed.len() + s.follow_ups.len()).sum();
-                    section(ui, "LATER");
+                    section(ui, tr("LATER"));
                     let count = u32::try_from(snoozed).unwrap_or(u32::MAX);
-                    if folder_row(ui, 10.0, self.view == View::Snoozed, "Snoozed and follow-ups", count).clicked() {
+                    if folder_row(ui, 10.0, self.view == View::Snoozed, tr("Snoozed and follow-ups"), count).clicked() {
                         self.open_snoozed();
                     }
                     self.local_pane(ui);
@@ -1467,10 +1475,10 @@ impl MailApp {
             p.text(pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, unread.to_string(), FontId::proportional(13.0), t::accent_text());
         }
         let status = match link {
-            Link::Online => format!("Connected to {detail}"),
+            Link::Online => trf!("Connected to {detail}", detail = detail),
             Link::Connecting => detail.clone(),
-            Link::Idle => "Not connected yet".to_owned(),
-            Link::Offline => format!("Offline: {detail}"),
+            Link::Idle => tr("Not connected yet").to_owned(),
+            Link::Offline => trf!("Offline: {detail}", detail = detail),
             Link::SignInRefused => detail.clone(),
         };
         let response = response.on_hover_text(status);
@@ -1478,7 +1486,7 @@ impl MailApp {
             self.focus_account(id);
         }
         let browser = self.ws.account(id).is_some_and(|a| matches!(a.provider, Provider::Outlook | Provider::Gmail));
-        let fix = if browser { "Sign-in refused: sign in again…" } else { "Sign-in refused: check the password…" };
+        let fix = if browser { tr("Sign-in refused: sign in again…") } else { tr("Sign-in refused: check the password…") };
         if link == Link::SignInRefused && ui.small_button(fix).clicked() {
             if let Some(a) = self.ws.account(id) {
                 self.form = Some(AccountForm::edit(a));
@@ -1491,7 +1499,7 @@ impl MailApp {
                 .map(|s| s.folders.iter().map(|f| (f.path.clone(), display_name(f.role, f.name()), f.depth(), f.unread)).collect())
                 .unwrap_or_default();
             if folders.is_empty() {
-                ui.label(RichText::new("  Waiting for the server…").size(12.0).color(t::faint()));
+                ui.label(RichText::new(tr("  Waiting for the server…")).size(12.0).color(t::faint()));
             }
             let current = match &self.view {
                 View::Folder(v, folder) if *v == id => self.folder_path(id, folder),
@@ -1537,8 +1545,8 @@ impl MailApp {
     fn message_list(&mut self, ui: &mut Ui) {
         let (title, subtitle, swatch) = match &self.view {
             View::Folder(id, _) => (self.view_name(), self.account(*id).map(|a| a.address.clone()).unwrap_or_default(), self.color_of(*id)),
-            View::Unified => ("Unified inbox".to_owned(), format!("{} accounts", self.ws.accounts().len()), t::accent()),
-            View::Flagged => ("Flagged".to_owned(), "all accounts".to_owned(), t::accent()),
+            View::Unified => (tr("Unified inbox").to_owned(), trf!("{count} accounts", count = self.ws.accounts().len()), t::accent()),
+            View::Flagged => (tr("Flagged").to_owned(), tr("all accounts").to_owned(), t::accent()),
             View::Search => (self.view_name(), self.search_subtitle(), t::accent()),
             View::Snoozed => (self.view_name(), String::new(), t::accent()),
         };
@@ -1564,9 +1572,9 @@ impl MailApp {
                     ui.add_space(30.0);
                     ui.vertical_centered(|ui| {
                         let text = match &self.view {
-                            View::Search => "Nothing found in the cached mail.",
-                            View::Flagged => "No flagged message.",
-                            _ => "No message here yet.",
+                            View::Search => tr("Nothing found in the cached mail."),
+                            View::Flagged => tr("No flagged message."),
+                            _ => tr("No message here yet."),
                         };
                         ui.label(RichText::new(text).color(t::faint()));
                     });
@@ -1591,7 +1599,7 @@ impl MailApp {
                             }
                             Row::Heading(text) => {
                                 ui.painter().rect_filled(rect, 0.0, t::raised());
-                                ui.painter().text(pos2(rect.left() + 14.0, rect.center().y), Align2::LEFT_CENTER, text, FontId::proportional(11.0), t::accent_text());
+                                ui.painter().text(pos2(rect.left() + 14.0, rect.center().y), Align2::LEFT_CENTER, tr(text), FontId::proportional(11.0), t::accent_text());
                             }
                             Row::Message { source, pos } => {
                                 let Some((account, folder, s)) = self.lookup(&self.list.sources, source, pos) else { continue };
@@ -1653,7 +1661,7 @@ fn message_row(painter: &Painter, rect: Rect, m: &Summary, selected: bool, hover
         let color = if m.flags.flagged { t::danger() } else { t::faint() };
         p.text(pos2(rect.right() - 12.0, rect.top() + 32.0), Align2::RIGHT_CENTER, &marks, FontId::proportional(12.0), color).left() - 6.0
     };
-    let subject = if m.subject.is_empty() { "(no subject)" } else { m.subject.as_str() };
+    let subject = if m.subject.is_empty() { tr("(no subject)") } else { m.subject.as_str() };
     clip(marks_left).text(pos2(x, rect.top() + 32.0), Align2::LEFT_CENTER, subject, FontId::proportional(13.0), accent);
     clip(rect.right() - 12.0).text(pos2(x, rect.top() + 49.0), Align2::LEFT_CENTER, &m.preview, FontId::proportional(12.0), t::faint());
 }
@@ -1673,9 +1681,9 @@ fn people(list: &[Person]) -> String {
 
 fn size_text(bytes: usize) -> String {
     match bytes {
-        b if b >= 1024 * 1024 => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
-        b if b >= 1024 => format!("{} KB", b / 1024),
-        b => format!("{b} bytes"),
+        b if b >= 1024 * 1024 => trf!("{size} MB", size = format!("{:.1}", b as f64 / (1024.0 * 1024.0))),
+        b if b >= 1024 => trf!("{size} KB", size = b / 1024),
+        b => trf!("{size} bytes", size = b),
     }
 }
 
@@ -1684,11 +1692,11 @@ impl MailApp {
         egui::CentralPanel::default().frame(Frame::new().fill(t::panel())).show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(120.0);
-                ui.label(RichText::new("Welcome to MailALM").size(24.0).strong());
+                ui.label(RichText::new(tr("Welcome to MailALM")).size(24.0).strong());
                 ui.add_space(8.0);
-                ui.label(RichText::new("Add your Vidéotron, Bell, Hotmail, Outlook.com, Gmail or other IMAP account to start.").color(t::muted()));
+                ui.label(RichText::new(tr("Add your Vidéotron, Bell, Hotmail, Outlook.com, Gmail or other IMAP account to start.")).color(t::muted()));
                 ui.add_space(16.0);
-                if ui.add(Button::new(RichText::new("Add an account").strong().color(t::on_accent())).fill(t::accent())).clicked() {
+                if ui.add(Button::new(RichText::new(tr("Add an account")).strong().color(t::on_accent())).fill(t::accent())).clicked() {
                     self.form = Some(AccountForm::new());
                 }
             });
@@ -1704,14 +1712,14 @@ impl MailApp {
         let mut sender_command: Option<(AccountId, SenderCommand)> = None;
         egui::CentralPanel::default().frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(28, 20))).show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Back to Mail").clicked() {
+                if ui.button(tr("Back to Mail")).clicked() {
                     back = true;
                 }
-                ui.label(RichText::new("Settings").size(20.0).strong());
+                ui.label(RichText::new(tr("Settings")).size(20.0).strong());
             });
             ui.add_space(14.0);
             ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.label(RichText::new("ACCOUNTS").size(11.0).strong().color(t::faint()));
+                ui.label(RichText::new(tr("ACCOUNTS")).size(11.0).strong().color(t::faint()));
                 ui.add_space(6.0);
                 for a in self.ws.accounts() {
                     let state = self.boxes.account(a.id);
@@ -1731,22 +1739,22 @@ impl MailApp {
                                 ui.label(RichText::new(servers).size(12.0).color(t::faint()));
                                 if let Some(s) = state {
                                     ui.label(RichText::new(match s.link {
-                                        Link::Online => format!("Connected · {} folders", s.folders.len()),
+                                        Link::Online => trf!("Connected · {count} folders", count = s.folders.len()),
                                         Link::SignInRefused => s.link_detail.clone(),
-                                        Link::Offline => format!("Offline: {}", s.link_detail),
-                                        Link::Connecting | Link::Idle => "Connecting…".to_owned(),
+                                        Link::Offline => trf!("Offline: {detail}", detail = s.link_detail),
+                                        Link::Connecting | Link::Idle => tr("Connecting…").to_owned(),
                                     }).size(12.0).color(link_color(s.link)));
                                 }
                             });
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if ui.button("Remove…").clicked() {
+                                if ui.button(tr("Remove…")).clicked() {
                                     remove = Some(a.id);
                                 }
-                                if ui.button("Edit…").clicked() {
+                                if ui.button(tr("Edit…")).clicked() {
                                     edit = Some(a.id);
                                 }
                                 if a.provider == Provider::Gmail {
-                                    let label = if self.senders_open == Some(a.id) { "Hide senders" } else { "Blocked senders…" };
+                                    let label = if self.senders_open == Some(a.id) { tr("Hide senders") } else { tr("Blocked senders…") };
                                     if ui.button(label).clicked() {
                                         senders = Some(a.id);
                                     }
@@ -1755,26 +1763,26 @@ impl MailApp {
                         });
                         if self.senders_open == Some(a.id) {
                             ui.add_space(8.0);
-                            ui.label(RichText::new("Gmail filters made by MailALM (a sender's address, to Spam, to the Trash, or never to Spam). Other filters are left alone, in Gmail's settings.").size(11.5).color(t::faint()));
+                            ui.label(RichText::new(tr("Gmail filters made by MailALM (a sender's address, to Spam, to the Trash, or never to Spam). Other filters are left alone, in Gmail's settings.")).size(11.5).color(t::faint()));
                             ui.add_space(4.0);
                             match state.and_then(|s| s.sender_rules.as_ref()) {
                                 None => {
-                                    ui.label(RichText::new("Reading Gmail's filters…").size(12.0).color(t::muted()));
+                                    ui.label(RichText::new(tr("Reading Gmail's filters…")).size(12.0).color(t::muted()));
                                 }
                                 Some(rules) if rules.is_empty() => {
-                                    ui.label(RichText::new("No sender is blocked or allowed. Use Junk, Block sender on a message.").size(12.0).color(t::muted()));
+                                    ui.label(RichText::new(tr("No sender is blocked or allowed. Use Junk, Block sender on a message.")).size(12.0).color(t::muted()));
                                 }
                                 Some(rules) => {
                                     for r in rules {
                                         ui.horizontal(|ui| {
                                             let what = match r.kind {
-                                                SenderRuleKind::Spam => "blocked: to Spam",
-                                                SenderRuleKind::Trash => "blocked: to the Trash",
-                                                SenderRuleKind::NeverSpam => "allowed: never to Spam",
+                                                SenderRuleKind::Spam => tr("blocked: to Spam"),
+                                                SenderRuleKind::Trash => tr("blocked: to the Trash"),
+                                                SenderRuleKind::NeverSpam => tr("allowed: never to Spam"),
                                             };
                                             ui.label(RichText::new(&r.address).size(12.5));
                                             ui.label(RichText::new(what).size(12.0).color(t::muted()));
-                                            if ui.small_button("Remove").clicked() {
+                                            if ui.small_button(tr("Remove")).clicked() {
                                                 sender_command = Some((a.id, SenderCommand::Remove(r.id.clone())));
                                             }
                                         });
@@ -1785,7 +1793,7 @@ impl MailApp {
                     });
                     ui.add_space(6.0);
                 }
-                if ui.button("Add an account…").clicked() {
+                if ui.button(tr("Add an account…")).clicked() {
                     add = true;
                 }
                 self.writing_settings(ui);
@@ -1794,10 +1802,10 @@ impl MailApp {
                 self.mcp_settings(ui);
                 self.appearance_settings(ui);
                 ui.add_space(20.0);
-                ui.label(RichText::new("ABOUT").size(11.0).strong().color(t::faint()));
+                ui.label(RichText::new(tr("ABOUT")).size(11.0).strong().color(t::faint()));
                 ui.add_space(6.0);
                 ui.label(RichText::new(format!("MailALM {} · MIT OR Apache-2.0", env!("CARGO_PKG_VERSION"))).color(t::muted()));
-                ui.label(RichText::new("Passwords and Microsoft and Google sign-ins are kept in the Windows Credential Manager. The mail cache is in your local application data folder.").size(12.0).color(t::faint()));
+                ui.label(RichText::new(tr("Passwords and Microsoft and Google sign-ins are kept in the Windows Credential Manager. The mail cache is in your local application data folder.")).size(12.0).color(t::faint()));
             });
         });
         if back {
@@ -1857,15 +1865,15 @@ impl MailApp {
             let mut answer: Option<bool> = None;
             let m = egui::Modal::new(Id::unique("mailalm-confirm-remove")).show(&ctx, |ui| {
                 ui.set_width(420.0);
-                ui.heading(format!("Remove {name}?"));
+                ui.heading(trf!("Remove {name}?", name = name));
                 ui.add_space(6.0);
-                ui.label("MailALM forgets the account, its password or sign-in and its cached mail on this PC. The mail on the server is not touched.");
+                ui.label(tr("MailALM forgets the account, its password or sign-in and its cached mail on this PC. The mail on the server is not touched."));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Remove").clicked() {
+                    if ui.button(tr("Remove")).clicked() {
                         answer = Some(true);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         answer = Some(false);
                     }
                 });
@@ -1884,19 +1892,19 @@ impl MailApp {
             let mut answer: Option<bool> = None;
             let m = egui::Modal::new(Id::unique("mailalm-confirm-delete")).show(&ctx, |ui| {
                 ui.set_width(420.0);
-                ui.heading("Delete for good?");
+                ui.heading(tr("Delete for good?"));
                 ui.add_space(6.0);
                 if key.account == LOCAL {
-                    ui.label("The message is removed from this PC. It cannot be brought back.");
+                    ui.label(tr("The message is removed from this PC. It cannot be brought back."));
                 } else {
-                    ui.label("The message is removed from the server. It cannot be brought back.");
+                    ui.label(tr("The message is removed from the server. It cannot be brought back."));
                 }
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Delete").clicked() {
+                    if ui.button(tr("Delete")).clicked() {
                         answer = Some(true);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         answer = Some(false);
                     }
                 });
@@ -1938,7 +1946,7 @@ impl MailApp {
             .frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(14, 0)))
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.label(RichText::new(format!("Items: {items} · Unread: {unread}")).size(12.0).color(t::faint()));
+                    ui.label(RichText::new(trf!("Items: {items} · Unread: {unread}", items = items, unread = unread)).size(12.0).color(t::faint()));
                     if let Some(text) = activity {
                         ui.add_space(12.0);
                         ui.spinner();
@@ -1947,7 +1955,7 @@ impl MailApp {
                     if let Some((text, problem)) = notice {
                         ui.add_space(12.0);
                         let label = ui.add(egui::Label::new(RichText::new(&text).size(12.0).color(if problem { t::danger() } else { t::accent_text() })).truncate().sense(Sense::click()));
-                        if label.on_hover_text("Click to dismiss").clicked() {
+                        if label.on_hover_text(tr("Click to dismiss")).clicked() {
                             self.notice = None;
                         }
                     }

@@ -15,6 +15,7 @@ use mailalm_model::pim::{BusyBlock, BusyStatus, Event as CalendarEvent, Freq, Re
 use mailalm_model::query::{civil_from_days, days_from_civil};
 
 use crate::agenda::{AccountPim, Ctx, Pim, calendar_color, link_domain, open_link, sources};
+use crate::i18n::{tr, trf};
 use crate::icons::{self, Icon};
 use crate::theme as t;
 use crate::time;
@@ -44,11 +45,11 @@ impl Mode {
 
     fn label(self) -> &'static str {
         match self {
-            Mode::Day => "Day",
-            Mode::WorkWeek => "Work week",
-            Mode::Week => "Week",
-            Mode::Month => "Month",
-            Mode::List => "List",
+            Mode::Day => tr("Day"),
+            Mode::WorkWeek => tr("Work week"),
+            Mode::Week => tr("Week"),
+            Mode::Month => tr("Month"),
+            Mode::List => tr("List"),
         }
     }
 }
@@ -81,6 +82,11 @@ struct Item {
 }
 
 impl Item {
+    /// Its title as shown: "(no title)" in the language shown when it has none.
+    fn shown_title(&self) -> &str {
+        if self.title.is_empty() { tr("(no title)") } else { &self.title }
+    }
+
     /// The local days it covers: `[first, last]`.
     fn days(&self) -> (i64, i64) {
         if self.all_day {
@@ -164,41 +170,44 @@ fn alpha(c: Color32, a: u8) -> Color32 {
 
 /// How a rule repeats, in words.
 pub fn repeat_text(r: &Recurrence) -> String {
-    let unit = match r.freq {
-        Freq::Daily => ("day", "daily"),
-        Freq::Weekly => ("week", "weekly"),
-        Freq::Monthly => ("month", "monthly"),
-        Freq::Yearly => ("year", "yearly"),
+    let n = r.interval;
+    let mut out = match (n > 1, r.freq) {
+        (true, Freq::Daily) => trf!("Repeats every {count} days", count = n),
+        (true, Freq::Weekly) => trf!("Repeats every {count} weeks", count = n),
+        (true, Freq::Monthly) => trf!("Repeats every {count} months", count = n),
+        (true, Freq::Yearly) => trf!("Repeats every {count} years", count = n),
+        (false, Freq::Daily) => tr("Repeats daily").to_owned(),
+        (false, Freq::Weekly) => tr("Repeats weekly").to_owned(),
+        (false, Freq::Monthly) => tr("Repeats monthly").to_owned(),
+        (false, Freq::Yearly) => tr("Repeats yearly").to_owned(),
     };
-    let mut out = if r.interval > 1 { format!("Repeats every {} {}s", r.interval, unit.0) } else { format!("Repeats {}", unit.1) };
     if !r.by_day.is_empty() {
         let days: Vec<&str> = r.by_day.iter().map(|(_, w)| w.code()).collect();
         out.push_str(&format!(" ({})", days.join(", ")));
     }
     match (r.count, r.until) {
-        (Some(n), _) => out.push_str(&format!(", {n} times")),
-        (None, Some(Until::Date(d))) => out.push_str(&format!(", until {}", time::date(d))),
-        (None, Some(Until::At(at) | Until::Local(at))) => out.push_str(&format!(", until {}", time::date(at.div_euclid(86_400)))),
-        (None, None) => {}
+        (Some(c), _) => trf!("{rule}, {count} times", rule = out, count = c),
+        (None, Some(Until::Date(d))) => trf!("{rule}, until {date}", rule = out, date = time::date(d)),
+        (None, Some(Until::At(at) | Until::Local(at))) => trf!("{rule}, until {date}", rule = out, date = time::date(at.div_euclid(86_400))),
+        (None, None) => out,
     }
-    out
 }
 
 pub fn busy_label(b: BusyStatus) -> &'static str {
     match b {
-        BusyStatus::Free => "Free",
-        BusyStatus::Tentative => "Tentative",
-        BusyStatus::Busy => "Busy",
-        BusyStatus::OutOfOffice => "Out of office",
+        BusyStatus::Free => tr("Free"),
+        BusyStatus::Tentative => tr("Tentative"),
+        BusyStatus::Busy => tr("Busy"),
+        BusyStatus::OutOfOffice => tr("Out of office"),
     }
 }
 
 pub fn response_label(r: Response) -> &'static str {
     match r {
-        Response::NeedsAction => "not answered",
-        Response::Accepted => "accepted",
-        Response::Tentative => "tentative",
-        Response::Declined => "declined",
+        Response::NeedsAction => tr("not answered"),
+        Response::Accepted => tr("accepted"),
+        Response::Tentative => tr("tentative"),
+        Response::Declined => tr("declined"),
     }
 }
 
@@ -208,7 +217,7 @@ pub fn busy_color(b: BusyStatus) -> Color32 {
         BusyStatus::Free => t::faint(),
         BusyStatus::Tentative => t::warn(),
         BusyStatus::Busy => t::danger(),
-        BusyStatus::OutOfOffice => Color32::from_rgb(0xb8, 0x93, 0xff),
+        BusyStatus::OutOfOffice => t::away(),
     }
 }
 
@@ -248,24 +257,24 @@ impl CalendarView {
         match self.mode {
             Mode::Day => {
                 let (y, m, d) = civil_from_days(self.day);
-                format!("{}, {} {d}, {y}", time::day_name(self.day), time::month_name(m))
+                trf!("{weekday}, {month} {day}, {year}", weekday = time::day_name(self.day), month = time::month_name(m), day = d, year = y)
             }
             Mode::WorkWeek | Mode::Week => {
                 let last = first + n - 1;
                 let ((y1, m1, d1), (y2, m2, d2)) = (civil_from_days(first), civil_from_days(last));
                 if m1 == m2 {
-                    format!("{} {d1} – {d2}, {y2}", time::month_short(m1))
+                    trf!("{month} {first} – {last}, {year}", month = time::month_short(m1), first = d1, last = d2, year = y2)
                 } else if y1 == y2 {
-                    format!("{} {d1} – {} {d2}, {y2}", time::month_short(m1), time::month_short(m2))
+                    trf!("{month1} {first} – {month2} {last}, {year}", month1 = time::month_short(m1), first = d1, month2 = time::month_short(m2), last = d2, year = y2)
                 } else {
-                    format!("{} {d1}, {y1} – {} {d2}, {y2}", time::month_short(m1), time::month_short(m2))
+                    trf!("{month1} {first}, {year1} – {month2} {last}, {year2}", month1 = time::month_short(m1), first = d1, year1 = y1, month2 = time::month_short(m2), last = d2, year2 = y2)
                 }
             }
             Mode::Month => {
                 let (y, m, _) = civil_from_days(self.day);
                 format!("{} {y}", time::month_name(m))
             }
-            Mode::List => format!("From {} {}", time::day_short(self.day), time::date(self.day)),
+            Mode::List => trf!("From {weekday} {date}", weekday = time::day_short(self.day), date = time::date(self.day)),
         }
     }
 
@@ -302,7 +311,7 @@ impl CalendarView {
                         start: o.start,
                         end: o.end,
                         all_day: e.all_day,
-                        title: if e.title.is_empty() { "(no title)".to_owned() } else { e.title.clone() },
+                        title: e.title.clone(),
                         calendar: e.calendar.clone(),
                         tentative: matches!(e.my_response, Some(Response::NeedsAction | Response::Tentative)) || e.busy == BusyStatus::Tentative,
                     };
@@ -356,21 +365,21 @@ impl Pim {
     /// the period shown, the views, and the availability of every calendar.
     pub fn calendar_commands(&mut self, ui: &mut Ui, cx: &Ctx<'_>) {
         let mut new: Option<bool> = None;
-        if ui.add(Button::new(RichText::new("New event").strong().color(t::on_accent())).fill(t::accent())).clicked() {
+        if ui.add(Button::new(RichText::new(tr("New event")).strong().color(t::on_accent())).fill(t::accent())).clicked() {
             new = Some(false);
         }
-        if ui.button("New meeting").clicked() {
+        if ui.button(tr("New meeting")).clicked() {
             new = Some(true);
         }
         ui.separator();
         let v = &mut self.calendar;
-        if ui.button("Today").clicked() {
+        if ui.button(tr("Today")).clicked() {
             v.day = time::local_day(time::now());
         }
-        if icons::button(ui, Icon::ChevronLeft, vec2(26.0, 24.0), t::text(), t::raised(), "Previous").clicked() {
+        if icons::button(ui, Icon::ChevronLeft, vec2(26.0, 24.0), t::text(), t::raised(), tr("Previous")).clicked() {
             v.step(false);
         }
-        if icons::button(ui, Icon::ChevronRight, vec2(26.0, 24.0), t::text(), t::raised(), "Next").clicked() {
+        if icons::button(ui, Icon::ChevronRight, vec2(26.0, 24.0), t::text(), t::raised(), tr("Next")).clicked() {
             v.step(true);
         }
         ui.label(RichText::new(v.title()).size(15.0).strong());
@@ -381,9 +390,9 @@ impl Pim {
             }
         }
         ui.separator();
-        ui.checkbox(&mut v.overlay, "Availability, all accounts").on_hover_text("Draws the time taken in every calendar of every account, hidden ones too, beside each day.");
+        ui.checkbox(&mut v.overlay, tr("Availability, all accounts")).on_hover_text(tr("Draws the time taken in every calendar of every account, hidden ones too, beside each day."));
         let due = self.reminders.due.len();
-        if due > 0 && !self.reminders.open && ui.button(format!("Reminders ({due})")).clicked() {
+        if due > 0 && !self.reminders.open && ui.button(trf!("Reminders ({count})", count = due)).clicked() {
             self.show_reminders();
         }
         if let Some(meeting) = new {
@@ -395,7 +404,7 @@ impl Pim {
     /// The calendars of every account, in the folder pane: each shown or hidden.
     pub fn calendar_sidebar(&mut self, ui: &mut Ui, cx: &Ctx<'_>) {
         ui.add_space(6.0);
-        ui.label(RichText::new("CALENDARS").size(11.0).strong().color(t::faint()));
+        ui.label(RichText::new(tr("CALENDARS")).size(11.0).strong().color(t::faint()));
         for a in cx.ws.accounts() {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -405,7 +414,7 @@ impl Pim {
             });
             let calendars = self.data.get(&a.id).map(|d| d.calendars.clone()).unwrap_or_default();
             if calendars.is_empty() {
-                ui.label(RichText::new("   Waiting for the calendar…").size(12.0).color(t::faint()));
+                ui.label(RichText::new(tr("   Waiting for the calendar…")).size(12.0).color(t::faint()));
             }
             for c in calendars {
                 let key = (a.id, c.id.clone());
@@ -428,7 +437,7 @@ impl Pim {
         }
         ui.add_space(12.0);
         ui.separator();
-        ui.label(RichText::new("IMAP accounts keep their calendar on this computer; invitations are sent and answered by mail.").size(11.0).color(t::faint()));
+        ui.label(RichText::new(tr("IMAP accounts keep their calendar on this computer; invitations are sent and answered by mail.")).size(11.0).color(t::faint()));
     }
 
     /// The calendar page: the view chosen, and the details of the event selected.
@@ -474,7 +483,7 @@ impl Pim {
                 let Some((_, e)) = find(&self.data, &sel) else { return };
                 let notify = e.is_organizer && e.is_meeting();
                 if cx.send(sel.account, PimCommand::DeleteEvent { event: Box::new(e.clone()), notify }) {
-                    self.say(if notify { "The event was deleted; its guests are told." } else { "The event was deleted." });
+                    self.say(if notify { tr("The event was deleted; its guests are told.") } else { tr("The event was deleted.") });
                 }
                 self.calendar.selected = None;
                 self.calendar.confirm_delete = false;
@@ -483,7 +492,7 @@ impl Pim {
                 let Some((_, e)) = find(&self.data, &sel) else { return };
                 let event = Box::new(e.clone());
                 if cx.send(sel.account, PimCommand::Respond { event, answer, send: true, comment: String::new(), proposal: None }) {
-                    self.say(format!("Your answer ({}) is being sent to the organizer.", response_label(answer)));
+                    self.say(trf!("Your answer ({response}) is being sent to the organizer.", response = response_label(answer)));
                 }
             }
             Action::Open(url) => {
@@ -521,7 +530,7 @@ fn grid(ui: &mut Ui, view: &mut CalendarView, data: &BTreeMap<AccountId, Account
         p.text(pos2(x + 6.0, head.top() + 11.0), Align2::LEFT_CENTER, time::day_short(d), FontId::proportional(11.5), color);
         p.text(pos2(x + 6.0, head.top() + 28.0), Align2::LEFT_CENTER, format!("{dd} {}", time::month_short(m)), FontId::proportional(15.0), if d == today { t::accent_text() } else { t::text() });
         let r = Rect::from_min_size(pos2(x, head.top()), vec2(col_w, HEAD_H));
-        if ui.interact(r, Id::unique(("mailalm-calendar-head", d)), Sense::click()).on_hover_text("Show this day").clicked() {
+        if ui.interact(r, Id::unique(("mailalm-calendar-head", d)), Sense::click()).on_hover_text(tr("Show this day")).clicked() {
             goto_day = Some(d);
         }
     }
@@ -536,13 +545,13 @@ fn grid(ui: &mut Ui, view: &mut CalendarView, data: &BTreeMap<AccountId, Account
     let rows = per_day.iter().map(Vec::len).max().unwrap_or(0);
     if rows > 0 {
         let (band, _) = ui.allocate_exact_size(vec2(width, rows as f32 * ALL_DAY_H + 4.0), Sense::hover());
-        ui.painter().text(pos2(band.left() + 4.0, band.top() + 10.0), Align2::LEFT_CENTER, "all day", FontId::proportional(10.5), t::faint());
+        ui.painter().text(pos2(band.left() + 4.0, band.top() + 10.0), Align2::LEFT_CENTER, tr("all day"), FontId::proportional(10.5), t::faint());
         for (i, list) in per_day.iter().enumerate() {
             for (row, k) in list.iter().enumerate() {
                 let Some(it) = view.items.get(*k) else { continue };
                 let rect = Rect::from_min_size(pos2(band.left() + TIME_W + i as f32 * col_w + 1.0, band.top() + 2.0 + row as f32 * ALL_DAY_H), vec2(col_w - 2.0, ALL_DAY_H - 2.0));
                 let response = ui.interact(rect, Id::unique(("mailalm-calendar-allday", it.account.0, it.event, it.start, i)), Sense::click());
-                chip(ui.painter(), rect, view.color(it, data, cx), &it.title, "", view.is_selected(it, data), it.tentative);
+                chip(ui.painter(), rect, view.color(it, data, cx), it.shown_title(), "", view.is_selected(it, data), it.tentative);
                 item_clicks(&response, view, it, data, actions);
             }
         }
@@ -625,7 +634,7 @@ fn grid(ui: &mut Ui, view: &mut CalendarView, data: &BTreeMap<AccountId, Account
                 let r = Rect::from_min_max(pos2(x + 2.0 + lane as f32 * w, *y0 + 1.0), pos2(x + 2.0 + (lane + 1) as f32 * w - 1.0, *y1 - 1.0));
                 let response = ui.interact(r, Id::unique(("mailalm-calendar-item", it.account.0, it.event, it.start, d)), Sense::click());
                 let sub = format!("{} – {}", time::clock(it.start), time::clock(it.end));
-                chip(&p, r, view.color(it, data, cx), &it.title, &sub, view.is_selected(it, data), it.tentative);
+                chip(&p, r, view.color(it, data, cx), it.shown_title(), &sub, view.is_selected(it, data), it.tentative);
                 item_clicks(&response, view, it, data, actions);
             }
         }
@@ -714,7 +723,7 @@ fn month(ui: &mut Ui, view: &mut CalendarView, data: &BTreeMap<AccountId, Accoun
             p.rect_stroke(cell, 0.0, Stroke::new(1.0, t::line()), StrokeKind::Inside);
             let num_color = if d == today { t::accent_text() } else if m == this_month { t::text() } else { t::faint() };
             let num = p.text(pos2(cell.left() + 6.0, cell.top() + 10.0), Align2::LEFT_CENTER, dd.to_string(), FontId::proportional(12.5), num_color);
-            if ui.interact(num.expand(3.0), Id::unique(("mailalm-calendar-month-day", d)), Sense::click()).on_hover_text("Show this day").clicked() {
+            if ui.interact(num.expand(3.0), Id::unique(("mailalm-calendar-month-day", d)), Sense::click()).on_hover_text(tr("Show this day")).clicked() {
                 goto_day = Some(d);
             }
             let here: Vec<usize> = view.items.iter().enumerate().filter(|(_, it)| it.days().0 <= d && d <= it.days().1).map(|(k, _)| k).collect();
@@ -728,12 +737,12 @@ fn month(ui: &mut Ui, view: &mut CalendarView, data: &BTreeMap<AccountId, Accoun
                     lp.rect_filled(line, 3.0, t::raised());
                 }
                 lp.circle_filled(pos2(line.left() + 4.0, line.center().y), 3.5, colors.1);
-                let label = if it.all_day { it.title.clone() } else { format!("{} {}", time::clock(it.start), it.title) };
+                let label = if it.all_day { it.shown_title().to_owned() } else { format!("{} {}", time::clock(it.start), it.shown_title()) };
                 lp.text(pos2(line.left() + 11.0, line.center().y), Align2::LEFT_CENTER, label, FontId::proportional(11.5), if it.tentative { t::muted() } else { t::text() });
                 item_clicks(&response, view, it, data, actions);
             }
             if here.len() > lines {
-                let more = p.text(pos2(cell.left() + 8.0, cell.bottom() - 9.0), Align2::LEFT_CENTER, format!("+{} more", here.len() - lines), FontId::proportional(11.0), t::accent_text());
+                let more = p.text(pos2(cell.left() + 8.0, cell.bottom() - 9.0), Align2::LEFT_CENTER, trf!("+{count} more", count = here.len() - lines), FontId::proportional(11.0), t::accent_text());
                 if ui.interact(more.expand(2.0), Id::unique(("mailalm-calendar-month-more", d)), Sense::click()).clicked() {
                     goto_day = Some(d);
                 }
@@ -776,18 +785,18 @@ fn list(ui: &mut Ui, view: &CalendarView, data: &BTreeMap<AccountId, AccountPim>
                 } else if response.hovered() {
                     p.rect_filled(rect, 4.0, t::raised());
                 }
-                let when = if it.all_day { "all day".to_owned() } else { format!("{} – {}", time::clock(it.start), time::clock(it.end)) };
+                let when = if it.all_day { tr("all day").to_owned() } else { format!("{} – {}", time::clock(it.start), time::clock(it.end)) };
                 p.text(pos2(rect.left() + 8.0, rect.center().y), Align2::LEFT_CENTER, when, FontId::proportional(12.0), t::muted());
                 let colors = view.color(it, data, cx);
                 p.circle_filled(pos2(rect.left() + 118.0, rect.center().y), 4.0, colors.1);
-                let title = p.text(pos2(rect.left() + 130.0, rect.center().y), Align2::LEFT_CENTER, &it.title, FontId::proportional(13.0), t::text());
+                let title = p.text(pos2(rect.left() + 130.0, rect.center().y), Align2::LEFT_CENTER, it.shown_title(), FontId::proportional(13.0), t::text());
                 p.text(pos2(title.right() + 10.0, rect.center().y), Align2::LEFT_CENTER, cx.name(it.account), FontId::proportional(11.5), t::faint());
                 item_clicks(&response, view, it, data, actions);
             }
         }
         if !any {
             ui.add_space(30.0);
-            ui.label(RichText::new(format!("Nothing in the {LIST_DAYS} days from {}.", time::date(first))).color(t::faint()));
+            ui.label(RichText::new(trf!("Nothing in the {days} days from {date}.", days = LIST_DAYS, date = time::date(first))).color(t::faint()));
         }
     });
 }
@@ -796,8 +805,8 @@ fn list(ui: &mut Ui, view: &CalendarView, data: &BTreeMap<AccountId, AccountPim>
 /// done with it.
 fn details(ui: &mut Ui, data: &BTreeMap<AccountId, AccountPim>, cx: &Ctx<'_>, sel: &Selected, confirm_delete: &mut bool, actions: &mut Vec<Action>) {
     let Some((d, e)) = find(data, sel) else {
-        ui.label(RichText::new("This event is no longer in the calendar.").color(t::faint()));
-        if ui.button("Close").clicked() {
+        ui.label(RichText::new(tr("This event is no longer in the calendar.")).color(t::faint()));
+        if ui.button(tr("Close")).clicked() {
             actions.push(Action::Select(None));
         }
         return;
@@ -805,60 +814,60 @@ fn details(ui: &mut Ui, data: &BTreeMap<AccountId, AccountPim>, cx: &Ctx<'_>, se
     let cal = d.calendar(&e.calendar);
     ScrollArea::vertical().id_salt("mailalm-calendar-details-scroll").auto_shrink([false, false]).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.add(egui::Label::new(RichText::new(if e.title.is_empty() { "(no title)" } else { e.title.as_str() }).size(17.0).strong()).wrap());
+            ui.add(egui::Label::new(RichText::new(if e.title.is_empty() { tr("(no title)") } else { e.title.as_str() }).size(17.0).strong()).wrap());
         });
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
             ui.painter().rect_filled(r, 2.0, calendar_color(cx, sel.account, cal));
-            ui.label(RichText::new(format!("{} · {}", cx.name(sel.account), cal.map_or("Calendar", |c| c.name.as_str()))).size(12.0).color(t::muted()));
+            ui.label(RichText::new(format!("{} · {}", cx.name(sel.account), cal.map_or(tr("Calendar"), |c| c.name.as_str()))).size(12.0).color(t::muted()));
         });
         ui.add_space(6.0);
         ui.label(time::span(sel.start, sel.end, e.all_day));
         if let Some(r) = &e.recurrence {
             ui.label(RichText::new(repeat_text(r)).size(12.0).color(t::muted()));
         } else if e.recurrence_id.is_some() {
-            ui.label(RichText::new("One occurrence of a series").size(12.0).color(t::muted()));
+            ui.label(RichText::new(tr("One occurrence of a series")).size(12.0).color(t::muted()));
         }
         if !e.location.is_empty() {
-            ui.label(format!("Where: {}", e.location));
+            ui.label(trf!("Where: {location}", location = e.location));
         }
         if let Some(o) = &e.online {
             match link_domain(&o.url) {
                 Some(domain) => {
                     ui.horizontal_wrapped(|ui| {
-                        ui.label(format!("Online meeting at {domain}"));
-                        if ui.button("Open in the browser").on_hover_text(o.url.as_str()).clicked() {
+                        ui.label(trf!("Online meeting at {domain}", domain = domain));
+                        if ui.button(tr("Open in the browser")).on_hover_text(o.url.as_str()).clicked() {
                             actions.push(Action::Open(o.url.clone()));
                         }
                     });
                 }
                 None => {
-                    ui.label(RichText::new("Online meeting: the link is being made by the provider.").size(12.0).color(t::faint()));
+                    ui.label(RichText::new(tr("Online meeting: the link is being made by the provider.")).size(12.0).color(t::faint()));
                 }
             }
         }
-        ui.label(RichText::new(format!("Shows as: {}", busy_label(e.busy))).size(12.0).color(t::muted()));
+        ui.label(RichText::new(trf!("Shows as: {status}", status = busy_label(e.busy))).size(12.0).color(t::muted()));
         if let Some(o) = &e.organizer {
             ui.add_space(6.0);
-            ui.label(RichText::new(format!("Organizer: {}", if o.name.is_empty() { o.email.clone() } else { format!("{} <{}>", o.name, o.email) })).size(12.5));
+            ui.label(RichText::new(trf!("Organizer: {organizer}", organizer = if o.name.is_empty() { o.email.clone() } else { format!("{} <{}>", o.name, o.email) })).size(12.5));
         }
         if !e.attendees.is_empty() {
-            ui.label(RichText::new(format!("{} guests", e.attendees.len())).size(12.0).color(t::faint()));
+            ui.label(RichText::new(trf!("{count} guests", count = e.attendees.len())).size(12.0).color(t::faint()));
             for a in e.attendees.iter().take(30) {
                 let who = if a.name.is_empty() { a.email.clone() } else { format!("{} <{}>", a.name, a.email) };
                 ui.label(RichText::new(format!("• {who} — {}", response_label(a.response))).size(12.0));
             }
             if e.attendees.len() > 30 {
-                ui.label(RichText::new(format!("… and {} more", e.attendees.len() - 30)).size(12.0).color(t::faint()));
+                ui.label(RichText::new(trf!("… and {count} more", count = e.attendees.len() - 30)).size(12.0).color(t::faint()));
             }
         }
         let can_edit = cal.is_some_and(|c| c.can_edit);
         if let Some(mine) = e.my_response.filter(|_| !e.is_organizer && can_edit) {
             ui.add_space(8.0);
-            ui.label(RichText::new(format!("Your answer: {}", response_label(mine))).strong());
+            ui.label(RichText::new(trf!("Your answer: {response}", response = response_label(mine))).strong());
             ui.horizontal(|ui| {
-                for (label, answer) in [("Accept", Response::Accepted), ("Tentative", Response::Tentative), ("Decline", Response::Declined)] {
-                    if ui.add_enabled(mine != answer, Button::new(label)).on_hover_text("Answer, and tell the organizer").clicked() {
+                for (label, answer) in [(tr("Accept"), Response::Accepted), (tr("Tentative"), Response::Tentative), (tr("Decline"), Response::Declined)] {
+                    if ui.add_enabled(mine != answer, Button::new(label)).on_hover_text(tr("Answer, and tell the organizer")).clicked() {
                         actions.push(Action::Respond(sel.clone(), answer));
                     }
                 }
@@ -872,28 +881,28 @@ fn details(ui: &mut Ui, data: &BTreeMap<AccountId, AccountPim>, cx: &Ctx<'_>, se
         ui.add_space(10.0);
         ui.separator();
         ui.horizontal(|ui| {
-            if can_edit && (e.is_organizer || !e.is_meeting()) && ui.button("Edit…").clicked() {
+            if can_edit && (e.is_organizer || !e.is_meeting()) && ui.button(tr("Edit…")).clicked() {
                 actions.push(Action::Edit(sel.clone()));
             }
-            if can_edit && ui.button("Delete…").clicked() {
+            if can_edit && ui.button(tr("Delete…")).clicked() {
                 *confirm_delete = true;
             }
-            if ui.button("Close").clicked() {
+            if ui.button(tr("Close")).clicked() {
                 actions.push(Action::Select(None));
             }
         });
         if *confirm_delete {
             Frame::new().fill(t::warn_bg()).corner_radius(6).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
-                let what = if e.recurrence.is_some() { "this event and every occurrence of its series" } else { "this event" };
-                ui.label(RichText::new(format!("Delete {what}?")).color(t::warn()));
+                let question = if e.recurrence.is_some() { tr("Delete this event and every occurrence of its series?") } else { tr("Delete this event?") };
+                ui.label(RichText::new(question).color(t::warn()));
                 if e.is_organizer && e.is_meeting() {
-                    ui.label(RichText::new("Its guests are told it is cancelled.").size(12.0).color(t::warn()));
+                    ui.label(RichText::new(tr("Its guests are told it is cancelled.")).size(12.0).color(t::warn()));
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Delete").clicked() {
+                    if ui.button(tr("Delete")).clicked() {
                         actions.push(Action::Delete(sel.clone()));
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         *confirm_delete = false;
                     }
                 });

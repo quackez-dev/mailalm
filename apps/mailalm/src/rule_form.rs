@@ -10,6 +10,8 @@
 use mailalm_model::rules::{Action, Condition, Host, Rule, Where};
 use mailalm_model::{Provider, Summary};
 
+use crate::i18n::tr;
+
 /// What a condition looks at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CondKind {
@@ -26,12 +28,12 @@ impl CondKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            CondKind::From => "From contains",
-            CondKind::To => "To or Cc contains",
-            CondKind::Subject => "Subject contains",
-            CondKind::Body => "Text contains",
-            CondKind::Words => "Subject or text contains",
-            CondKind::HasAttachment => "Has an attachment",
+            CondKind::From => tr("From contains"),
+            CondKind::To => tr("To or Cc contains"),
+            CondKind::Subject => tr("Subject contains"),
+            CondKind::Body => tr("Text contains"),
+            CondKind::Words => tr("Subject or text contains"),
+            CondKind::HasAttachment => tr("Has an attachment"),
         }
     }
 }
@@ -52,12 +54,12 @@ impl ActKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            ActKind::MoveTo => "Move to the folder",
-            ActKind::MarkRead => "Mark as read",
-            ActKind::Flag => "Flag",
-            ActKind::Category => "Add the category (Gmail: label)",
-            ActKind::Delete => "Move to the Trash",
-            ActKind::Forward => "Forward to",
+            ActKind::MoveTo => tr("Move to the folder"),
+            ActKind::MarkRead => tr("Mark as read"),
+            ActKind::Flag => tr("Flag the message"),
+            ActKind::Category => tr("Add the category (Gmail: label)"),
+            ActKind::Delete => tr("Move to the Trash"),
+            ActKind::Forward => tr("Forward to"),
         }
     }
 }
@@ -108,10 +110,10 @@ pub fn host_of(provider: Provider) -> Option<Host> {
 /// Where a rule runs, as the list says it.
 pub fn place_text(place: Where, provider: Provider) -> &'static str {
     match (place, provider) {
-        (Where::Local, _) => "In MailALM, on new mail in the Inbox, while MailALM runs",
-        (Where::Server, Provider::Outlook) => "On Outlook.com's server (an inbox rule), even when MailALM is closed",
-        (Where::Server, Provider::Gmail) => "On Gmail's server (a filter), even when MailALM is closed",
-        (Where::Server, Provider::Imap(_)) => "On the server",
+        (Where::Local, _) => tr("In MailALM, on new mail in the Inbox, while MailALM runs"),
+        (Where::Server, Provider::Outlook) => tr("On Outlook.com's server (an inbox rule), even when MailALM is closed"),
+        (Where::Server, Provider::Gmail) => tr("On Gmail's server (a filter), even when MailALM is closed"),
+        (Where::Server, Provider::Imap(_)) => tr("On the server"),
     }
 }
 
@@ -241,13 +243,13 @@ impl RuleForm {
     pub fn build(&self, provider: Provider) -> Result<Rule, String> {
         let host = match self.place {
             Where::Local => Host::Local,
-            Where::Server => host_of(provider).ok_or("This account's server keeps no rules MailALM can reach: make it a MailALM rule.")?,
+            Where::Server => host_of(provider).ok_or(tr("This account's server keeps no rules MailALM can reach: make it a MailALM rule."))?,
         };
         if self.forwards() && self.place == Where::Local {
-            return Err("MailALM's own rules never forward mail: forwarding is only for a rule on the server.".to_owned());
+            return Err(tr("MailALM's own rules never forward mail: forwarding is only for a rule on the server.").to_owned());
         }
         if self.needs_forward_confirmation() {
-            return Err("Forwarding sends your mail to another address: confirm it first.".to_owned());
+            return Err(tr("Forwarding sends your mail to another address: confirm it first.").to_owned());
         }
         let rule = self.rule();
         rule.check(host)?;

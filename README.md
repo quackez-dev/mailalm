@@ -3,7 +3,7 @@
 A mail and calendar client for Windows, written in Rust with egui: Outlook.com/Hotmail, Gmail and
 classic IMAP accounts side by side, each kept clearly apart.
 
-**Status: phases 8 to 10, interface written, not yet tested.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
+**Status: phases 8 to 10, interface written in English and French, not yet tested.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
 (Microsoft Graph) and Gmail accounts (Gmail API), the last two signed in on the provider's page in
 the browser: reading, sending, folders and labels, moving, flags, a local cache,
 search in the cache, and changes made while offline. Outlook accounts report junk to Outlook.com;
@@ -52,8 +52,8 @@ for a forwarding. Messages can be snoozed and followed up ("remind me if no repl
 blocking, answering an invitation or changing a rule, shows a triage proposal as a list to tick,
 and keeps a journal. Messages export as .eml or PDF, folders as .mbox; .eml, .mbox (Thunderbird,
 eM Client's export) and Outlook .pst/.ost files import into "On this PC", a folder tree kept on
-this computer only. The theme can be dark, light or as Windows is set; the language setting is
-there, its French texts are not yet.
+this computer only. The theme can be dark, light or as Windows is set; the interface is in English
+or in French (Settings, Appearance and language).
 
 ## Principles
 
@@ -107,7 +107,8 @@ MailALM is built and tested on GitHub Actions only ([build.yml](.github/workflow
 - egui and winit (storytold's forks) come from private mirrors at the audited commits;
 - tests and build run offline.
 
-A manual run or a `crafttools-v*` tag produces an unsigned portable zip with its SHA-256 sums.
+A manual run or a `crafttools-v*` tag produces an unsigned MSI installer (made with WiX) with its
+SHA-256 sums, kept as a one-day artifact.
 
 ## License
 

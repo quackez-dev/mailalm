@@ -11,6 +11,7 @@ use mailalm_model::rules::{Rule, Where};
 use mailalm_model::{AccountId, FolderScope, Provider, Summary};
 
 use super::{MailApp, Page};
+use crate::i18n::{tr, trf};
 use crate::rule_form::{ActKind, ActRow, CondKind, CondRow, RuleForm, host_of, place_text};
 use crate::theme as t;
 use crate::time;
@@ -83,12 +84,12 @@ fn actions_text(r: &Rule) -> String {
     r.actions
         .iter()
         .map(|a| match a {
-            Action::MoveTo(p) => format!("move to {p}"),
-            Action::MarkRead => "mark as read".to_owned(),
-            Action::Flag => "flag".to_owned(),
-            Action::Category(c) => format!("category {c}"),
-            Action::Delete => "move to the Trash".to_owned(),
-            Action::Forward(to) => format!("forward to {}", to.join(", ")),
+            Action::MoveTo(p) => trf!("move to {folder}", folder = p),
+            Action::MarkRead => tr("mark as read").to_owned(),
+            Action::Flag => tr("flag").to_owned(),
+            Action::Category(c) => trf!("category {category}", category = c),
+            Action::Delete => tr("move to the Trash").to_owned(),
+            Action::Forward(to) => trf!("forward to {addresses}", addresses = to.join(", ")),
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -106,11 +107,11 @@ impl MailApp {
     /// "Move ▾ → Create a rule from this message": the editor, in Settings, with the sender.
     pub(super) fn rule_from_message(&mut self) {
         let Some(key) = self.selected.clone() else {
-            self.say("Select a message first.");
+            self.say(tr("Select a message first."));
             return;
         };
         let (Some(provider), Some(s)) = (self.account(key.account).map(|a| a.provider), self.summary_of(&key).cloned()) else {
-            self.say("A rule is made for a message of an account.");
+            self.say(tr("A rule is made for a message of an account."));
             return;
         };
         self.rules.account = Some(key.account);
@@ -120,17 +121,17 @@ impl MailApp {
         }
         self.engine.send(key.account, Command::Rules(RuleCommand::List));
         self.page = Page::Settings;
-        self.say("Choose what the rule does with this sender's messages, then save it (Settings, Rules).");
+        self.say(tr("Choose what the rule does with this sender's messages, then save it (Settings, Rules)."));
     }
 
     /// The Rules section of the settings.
     pub(super) fn rules_settings(&mut self, ui: &mut Ui) {
         let accounts: Vec<(AccountId, String, Provider)> = self.ws.accounts().iter().map(|a| (a.id, format!("{} · {}", a.name, a.address), a.provider)).collect();
         ui.add_space(20.0);
-        ui.label(RichText::new("RULES").size(11.0).strong().color(t::faint()));
+        ui.label(RichText::new(tr("RULES")).size(11.0).strong().color(t::faint()));
         ui.add_space(6.0);
         let Some(first) = accounts.first().map(|a| a.0) else {
-            ui.label(RichText::new("Add an account first.").color(t::faint()));
+            ui.label(RichText::new(tr("Add an account first.")).color(t::faint()));
             return;
         };
         let current = self.rules.account.filter(|a| accounts.iter().any(|(id, ..)| id == a)).unwrap_or(first);
@@ -148,7 +149,7 @@ impl MailApp {
         let mut edit: Option<Rule> = None;
         card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Account").color(t::muted()));
+                ui.label(RichText::new(tr("Account")).color(t::muted()));
                 let shown = accounts.iter().find(|(id, ..)| *id == current).map(|(_, n, _)| n.clone()).unwrap_or_default();
                 egui::ComboBox::from_id_salt("mailalm-rules-account").selected_text(shown).show_ui(ui, |ui| {
                     for (id, name, _) in &accounts {
@@ -159,25 +160,25 @@ impl MailApp {
                         }
                     }
                 });
-                if ui.button("Refresh").clicked() {
+                if ui.button(tr("Refresh")).clicked() {
                     ask.push((current, Ask::List));
                 }
-                if ui.button("New rule…").clicked() {
+                if ui.button(tr("New rule…")).clicked() {
                     new_rule = true;
                 }
             });
             let server = match host_of(provider) {
-                Some(_) => "Rules run on the account's server when it keeps them (Outlook's inbox rules, Gmail's filters): they work while MailALM is closed.",
-                None => "An IMAP server keeps no rules MailALM can reach: MailALM runs this account's rules itself, on new mail in the Inbox, while it runs.",
+                Some(_) => tr("Rules run on the account's server when it keeps them (Outlook's inbox rules, Gmail's filters): they work while MailALM is closed."),
+                None => tr("An IMAP server keeps no rules MailALM can reach: MailALM runs this account's rules itself, on new mail in the Inbox, while it runs."),
             };
             ui.label(RichText::new(server).size(11.5).color(t::faint()));
             ui.add_space(6.0);
             match &rules {
                 None => {
-                    ui.label(RichText::new("Reading the rules…").color(t::muted()));
+                    ui.label(RichText::new(tr("Reading the rules…")).color(t::muted()));
                 }
                 Some(list) if list.is_empty() => {
-                    ui.label(RichText::new("No rule yet.").color(t::muted()));
+                    ui.label(RichText::new(tr("No rule yet.")).color(t::muted()));
                 }
                 Some(list) => {
                     // The server's first, as they run.
@@ -190,24 +191,25 @@ impl MailApp {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(r.title()).strong());
                                     if !r.enabled {
-                                        ui.label(RichText::new("off").size(11.0).color(t::warn()));
+                                        ui.label(RichText::new(tr("off")).size(11.0).color(t::warn()));
                                     }
                                 });
-                                ui.label(RichText::new(format!("Then: {}{}", actions_text(r), if r.stop { "; then stop" } else { "" })).size(12.0).color(t::muted()));
+                                let then = if r.stop { trf!("Then: {actions}; then stop", actions = actions_text(r)) } else { trf!("Then: {actions}", actions = actions_text(r)) };
+                                ui.label(RichText::new(then).size(12.0).color(t::muted()));
                                 ui.label(RichText::new(place_text(r.place, provider)).size(11.5).color(t::faint()));
                                 if r.read_only() {
                                     ui.label(
-                                        RichText::new(format!("Made elsewhere with what MailALM can't show ({}): it can only be deleted here.", r.unsupported.join(", ")))
+                                        RichText::new(trf!("Made elsewhere with what MailALM can't show ({features}): it can only be deleted here.", features = r.unsupported.join(", ")))
                                             .size(11.5)
                                             .color(t::warn()),
                                     );
                                 }
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("Delete…").clicked() {
+                                if ui.small_button(tr("Delete…")).clicked() {
                                     self.rules.delete = Some((current, r.clone()));
                                 }
-                                if !r.read_only() && ui.small_button("Edit…").clicked() {
+                                if !r.read_only() && ui.small_button(tr("Edit…")).clicked() {
                                     edit = Some(r.clone());
                                 }
                             });
@@ -265,9 +267,9 @@ impl MailApp {
                 let name = rule.title();
                 if self.engine.send(account, Command::Rules(RuleCommand::Save(Box::new(rule)))) {
                     self.rules.editing = None;
-                    self.say(format!("Saving the rule \"{name}\"… the list shows it once the account has it."));
+                    self.say(trf!("Saving the rule \"{name}\"… the list shows it once the account has it.", name = name));
                 } else if let Some(e) = &mut self.rules.editing {
-                    e.error = Some("The account is not running: the rule was not saved.".to_owned());
+                    e.error = Some(tr("The account is not running: the rule was not saved.").to_owned());
                 }
             }
             Err(err) => e.error = Some(err),
@@ -285,18 +287,16 @@ impl MailApp {
             let mut answer: Option<bool> = None;
             let m = egui::Modal::new(Id::unique("mailalm-confirm-forward")).show(ctx, |ui| {
                 ui.set_width(500.0);
-                ui.heading("Forward these messages?");
+                ui.heading(tr("Forward these messages?"));
                 ui.add_space(6.0);
-                ui.label(format!(
-                    "This rule makes the account's server send a copy of every message it matches to {to}, from now on, even while MailALM is closed, without asking again."
-                ));
-                ui.label(RichText::new("Mail leaves your account this way without you seeing it: make sure the address is yours or someone you trust, and that the conditions are narrow.").color(t::warn()));
+                ui.label(trf!("This rule makes the account's server send a copy of every message it matches to {to}, from now on, even while MailALM is closed, without asking again.", to = to));
+                ui.label(RichText::new(tr("Mail leaves your account this way without you seeing it: make sure the address is yours or someone you trust, and that the conditions are narrow.")).color(t::warn()));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Forward these messages").clicked() {
+                    if ui.button(tr("Forward these messages")).clicked() {
                         answer = Some(true);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         answer = Some(false);
                     }
                 });
@@ -318,19 +318,19 @@ impl MailApp {
             let mut answer: Option<bool> = None;
             let m = egui::Modal::new(Id::unique("mailalm-delete-rule")).show(ctx, |ui| {
                 ui.set_width(460.0);
-                ui.heading("Delete this rule?");
+                ui.heading(tr("Delete this rule?"));
                 ui.add_space(6.0);
                 ui.label(RichText::new(rule.title()).strong());
                 ui.label(match rule.place {
-                    Where::Server => "It is deleted from the account's server: it stops running there.",
-                    Where::Local => "MailALM stops running it.",
+                    Where::Server => tr("It is deleted from the account's server: it stops running there."),
+                    Where::Local => tr("MailALM stops running it."),
                 });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Delete").clicked() {
+                    if ui.button(tr("Delete")).clicked() {
                         answer = Some(true);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         answer = Some(false);
                     }
                 });
@@ -341,7 +341,7 @@ impl MailApp {
             if let Some(yes) = answer {
                 self.rules.delete = None;
                 if yes && !self.engine.send(account, Command::Rules(RuleCommand::Delete { id: rule.id.clone(), place: rule.place })) {
-                    self.warn("The account is not running: the rule was not deleted.");
+                    self.warn(tr("The account is not running: the rule was not deleted."));
                 }
             }
         }
@@ -353,27 +353,27 @@ fn editor(ui: &mut Ui, e: &mut Editing, provider: Provider, folders: &[String], 
     let mut ask = None;
     let server_ok = host_of(provider).is_some();
     Frame::new().fill(t::raised()).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
-        ui.label(RichText::new(if e.form.id.is_empty() { "New rule" } else { "Change the rule" }).strong());
+        ui.label(RichText::new(if e.form.id.is_empty() { tr("New rule") } else { tr("Change the rule") }).strong());
         ui.horizontal(|ui| {
-            ui.label("Name");
-            ui.add(TextEdit::singleline(&mut e.form.name).desired_width(320.0).hint_text(if provider == Provider::Gmail { "Gmail filters have no name" } else { "" }));
+            ui.label(tr("Name"));
+            ui.add(TextEdit::singleline(&mut e.form.name).desired_width(320.0).hint_text(if provider == Provider::Gmail { tr("Gmail filters have no name") } else { "" }));
         });
         ui.horizontal(|ui| {
-            ui.label("Runs");
+            ui.label(tr("Runs"));
             ui.add_enabled_ui(server_ok && e.form.id.is_empty(), |ui| {
-                ui.radio_value(&mut e.form.place, Where::Server, "On the server");
+                ui.radio_value(&mut e.form.place, Where::Server, tr("On the server"));
             });
             ui.add_enabled_ui(e.form.id.is_empty(), |ui| {
-                ui.radio_value(&mut e.form.place, Where::Local, "In MailALM");
+                ui.radio_value(&mut e.form.place, Where::Local, tr("In MailALM"));
             });
         });
         ui.label(RichText::new(place_text(e.form.place, provider)).size(11.5).color(t::faint()));
         ui.horizontal(|ui| {
-            ui.checkbox(&mut e.form.enabled, "On");
-            ui.checkbox(&mut e.form.stop, "Then stop: the rules after it don't run on these messages");
+            ui.checkbox(&mut e.form.enabled, tr("On"));
+            ui.checkbox(&mut e.form.stop, tr("Then stop: the rules after it don't run on these messages"));
         });
         ui.add_space(6.0);
-        ui.label(RichText::new("WHEN EVERY CONDITION HOLDS (words separated by commas: any of them)").size(11.0).color(t::faint()));
+        ui.label(RichText::new(tr("WHEN EVERY CONDITION HOLDS (words separated by commas: any of them)")).size(11.0).color(t::faint()));
         let mut remove: Option<usize> = None;
         for (i, c) in e.form.conditions.iter_mut().enumerate() {
             ui.horizontal(|ui| {
@@ -385,7 +385,7 @@ fn editor(ui: &mut Ui, e: &mut Editing, provider: Provider, folders: &[String], 
                 if c.kind != CondKind::HasAttachment {
                     ui.add(TextEdit::singleline(&mut c.words).desired_width(300.0));
                 }
-                if ui.small_button("Remove").clicked() {
+                if ui.small_button(tr("Remove")).clicked() {
                     remove = Some(i);
                 }
             });
@@ -393,11 +393,11 @@ fn editor(ui: &mut Ui, e: &mut Editing, provider: Provider, folders: &[String], 
         if let Some(i) = remove {
             e.form.conditions.remove(i);
         }
-        if ui.small_button("Add a condition").clicked() {
+        if ui.small_button(tr("Add a condition")).clicked() {
             e.form.conditions.push(CondRow { kind: CondKind::Subject, words: String::new() });
         }
         ui.add_space(6.0);
-        ui.label(RichText::new("THEN").size(11.0).color(t::faint()));
+        ui.label(RichText::new(tr("THEN")).size(11.0).color(t::faint()));
         let mut remove: Option<usize> = None;
         for (i, a) in e.form.actions.iter_mut().enumerate() {
             ui.horizontal(|ui| {
@@ -408,7 +408,7 @@ fn editor(ui: &mut Ui, e: &mut Editing, provider: Provider, folders: &[String], 
                 });
                 match a.kind {
                     ActKind::MoveTo => {
-                        let shown = if a.value.is_empty() { "Choose a folder".to_owned() } else { a.value.clone() };
+                        let shown = if a.value.is_empty() { tr("Choose a folder").to_owned() } else { a.value.clone() };
                         egui::ComboBox::from_id_salt(("mailalm-rule-folder", i)).selected_text(shown).width(260.0).show_ui(ui, |ui| {
                             for f in folders {
                                 ui.selectable_value(&mut a.value, f.clone(), f.as_str());
@@ -416,14 +416,14 @@ fn editor(ui: &mut Ui, e: &mut Editing, provider: Provider, folders: &[String], 
                         });
                     }
                     ActKind::Category => {
-                        ui.add(TextEdit::singleline(&mut a.value).desired_width(200.0).hint_text("Category or label"));
+                        ui.add(TextEdit::singleline(&mut a.value).desired_width(200.0).hint_text(tr("Category or label")));
                     }
                     ActKind::Forward => {
-                        ui.add(TextEdit::singleline(&mut a.value).desired_width(260.0).hint_text("address@example.com"));
+                        ui.add(TextEdit::singleline(&mut a.value).desired_width(260.0).hint_text(tr("address@example.com")));
                     }
                     _ => {}
                 }
-                if ui.small_button("Remove").clicked() {
+                if ui.small_button(tr("Remove")).clicked() {
                     remove = Some(i);
                 }
             });
@@ -431,23 +431,23 @@ fn editor(ui: &mut Ui, e: &mut Editing, provider: Provider, folders: &[String], 
         if let Some(i) = remove {
             e.form.actions.remove(i);
         }
-        if ui.small_button("Add an action").clicked() {
+        if ui.small_button(tr("Add an action")).clicked() {
             e.form.actions.push(ActRow { kind: ActKind::MarkRead, value: String::new() });
         }
         if e.form.forwards() {
             ui.label(
-                RichText::new("Forwarding is only for a rule on the server, and MailALM asks you to confirm it when you save: it sends your mail to another address.")
+                RichText::new(tr("Forwarding is only for a rule on the server, and MailALM asks you to confirm it when you save: it sends your mail to another address."))
                     .size(11.5)
                     .color(t::warn()),
             );
         }
-        ui.label(RichText::new("A rule never starts a program: MailALM has no such action.").size(11.0).color(t::faint()));
+        ui.label(RichText::new(tr("A rule never starts a program: MailALM has no such action.")).size(11.0).color(t::faint()));
         if let Some(err) = &e.error {
             ui.label(RichText::new(err).color(t::danger()));
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui.button("Preview the messages it touches").on_hover_text("Looks through the messages MailALM has cached; nothing is changed").clicked() {
+            if ui.button(tr("Preview the messages it touches")).on_hover_text(tr("Looks through the messages MailALM has cached; nothing is changed")).clicked() {
                 let folders = match (e.preview_everywhere, inbox) {
                     (false, Some(p)) => FolderScope::Folder(p.to_owned()),
                     _ => FolderScope::Account,
@@ -455,20 +455,21 @@ fn editor(ui: &mut Ui, e: &mut Editing, provider: Provider, folders: &[String], 
                 *next_preview += 1;
                 ask = Some(Ask::Preview(Box::new(e.form.rule()), folders));
             }
-            ui.checkbox(&mut e.preview_everywhere, "in every folder, not only the Inbox");
+            ui.checkbox(&mut e.preview_everywhere, tr("in every folder, not only the Inbox"));
         });
         match &e.preview {
             Some((_, None)) => {
-                ui.label(RichText::new("Looking through the cached messages…").color(t::muted()));
+                ui.label(RichText::new(tr("Looking through the cached messages…")).color(t::muted()));
             }
             Some((_, Some(hits))) => {
-                ui.label(RichText::new(format!("{} cached message{} would be touched", hits.len(), if hits.len() == 1 { "" } else { "s" })).strong());
+                let touched = if hits.len() == 1 { tr("1 cached message would be touched").to_owned() } else { trf!("{count} cached messages would be touched", count = hits.len()) };
+                ui.label(RichText::new(touched).strong());
                 ScrollArea::vertical().id_salt("mailalm-rule-preview").max_height(200.0).show(ui, |ui| {
                     for (folder, s) in hits.iter().take(PREVIEW_SHOWN) {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(time::short(s.date)).size(12.0).color(t::faint()));
                             ui.label(RichText::new(s.from.display()).size(12.5));
-                            ui.label(RichText::new(if s.subject.is_empty() { "(no subject)" } else { s.subject.as_str() }).size(12.5).color(t::muted()));
+                            ui.label(RichText::new(if s.subject.is_empty() { tr("(no subject)") } else { s.subject.as_str() }).size(12.5).color(t::muted()));
                             ui.label(RichText::new(folder).size(11.5).color(t::faint()));
                         });
                     }
@@ -478,10 +479,10 @@ fn editor(ui: &mut Ui, e: &mut Editing, provider: Provider, folders: &[String], 
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui.button("Save the rule").clicked() {
+            if ui.button(tr("Save the rule")).clicked() {
                 ask = Some(Ask::Save);
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(tr("Cancel")).clicked() {
                 ask = Some(Ask::Close);
             }
         });

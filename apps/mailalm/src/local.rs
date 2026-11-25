@@ -23,10 +23,13 @@ use mailalm_model::{AccountId, Change, Flags, Folder, FolderRole, FolderScope, Q
 use mailalm_porting::{Cancel, Item, Progress, Report, Sink};
 use mailalm_store::Store;
 
+use crate::i18n::{tr, tr_key, trf};
+
 /// The account number of the mail kept on this PC (never a real account's: those start at 1).
 pub const LOCAL: AccountId = AccountId(0);
-/// The name the folder pane gives it.
-pub const LOCAL_NAME: &str = "On this PC";
+/// The name the folder pane gives it: kept in English, as the search's `account:` operator matches
+/// it, and shown with `tr(LOCAL_NAME)`.
+pub const LOCAL_NAME: &str = tr_key("On this PC");
 /// Its folders' delimiter.
 const DELIMITER: char = '/';
 /// Messages handed to the cache at once during an import.
@@ -81,7 +84,7 @@ impl LocalBox {
     /// Deletes a folder of this mailbox, the folders under it and their messages, on a thread of
     /// its own (an import can be large); the folder list is shown again after.
     pub fn delete_folder(&self, path: String, wake: Wake) -> Result<(), String> {
-        let store = self.store().map_err(|e| format!("The mail kept on this PC can't be opened: {e}"))?;
+        let store = self.store().map_err(|e| trf!("The mail kept on this PC can't be opened: {error}", error = e))?;
         let back = self.sender();
         std::thread::Builder::new()
             .name("mailalm-delete-folder".into())
@@ -93,7 +96,7 @@ impl LocalBox {
                 wake();
             })
             .map(drop)
-            .map_err(|e| format!("The folder could not be deleted: {e}"))
+            .map_err(|e| trf!("The folder could not be deleted: {error}", error = e))
     }
 }
 
@@ -121,7 +124,7 @@ fn run(base: &Path, commands: &Receiver<Command>, events: &Sender<Event>, wake: 
     let store = match Store::open(base, LOCAL) {
         Ok(s) => s,
         Err(e) => {
-            tell(Event::Error { account: LOCAL, text: format!("The mail kept on this PC can't be opened: {e}") });
+            tell(Event::Error { account: LOCAL, text: trf!("The mail kept on this PC can't be opened: {error}", error = e) });
             return;
         }
     };
@@ -152,7 +155,7 @@ fn run(base: &Path, commands: &Receiver<Command>, events: &Sender<Event>, wake: 
             Command::Find { id, query, folders, server } => {
                 tell(Event::SearchResults { account: LOCAL, id, hits: search(&store, &query, &folders) });
                 if server {
-                    tell(Event::ServerResults { account: LOCAL, id, result: Err(format!("{LOCAL_NAME} has no server to search.")) });
+                    tell(Event::ServerResults { account: LOCAL, id, result: Err(trf!("{place} has no server to search.", place = tr(LOCAL_NAME))) });
                 }
             }
             Command::Pim(PimCommand::Invitation { folder, uid, index }) => tell(Event::Invitation {
@@ -160,9 +163,9 @@ fn run(base: &Path, commands: &Receiver<Command>, events: &Sender<Event>, wake: 
                 folder,
                 uid,
                 index,
-                result: Err("Invitations in mail kept on this PC are not read: answer them from the account they came to.".to_owned()),
+                result: Err(tr("Invitations in mail kept on this PC are not read: answer them from the account they came to.").to_owned()),
             }),
-            _ => tell(error(format!("This can't be done with mail kept on this PC ({LOCAL_NAME}): it has no server."))),
+            _ => tell(error(trf!("This can't be done with mail kept on this PC ({place}): it has no server.", place = tr(LOCAL_NAME)))),
         }
     }
 }
@@ -170,21 +173,21 @@ fn run(base: &Path, commands: &Receiver<Command>, events: &Sender<Event>, wake: 
 /// A message opened from the cache: what the reading pane shows.
 fn open(store: &Store, folder: String, uid: u32) -> Event {
     let Some(raw) = store.message(&folder, uid) else {
-        return Event::MessageUnavailable { account: LOCAL, folder, uid, reason: "This message is no longer on this PC.".to_owned() };
+        return Event::MessageUnavailable { account: LOCAL, folder, uid, reason: tr("This message is no longer on this PC.").to_owned() };
     };
     match mailalm_mime::parse(&raw) {
         Some(parsed) => {
             let html = mailalm_mime::html_body(&raw).map(|html| Box::new(mailalm_mime::HtmlBody { html, images: mailalm_mime::related_images(&raw) }));
             Event::Message { account: LOCAL, folder, uid, parsed: Box::new(parsed), html }
         }
-        None => Event::MessageUnavailable { account: LOCAL, folder, uid, reason: "This message could not be read.".to_owned() },
+        None => Event::MessageUnavailable { account: LOCAL, folder, uid, reason: tr("This message could not be read.").to_owned() },
     }
 }
 
 /// An attachment the user asked to review, decoded from the message on this PC and looked at.
 fn review(store: &Store, folder: String, uid: u32, index: usize) -> Event {
     let result = match store.message(&folder, uid) {
-        None => Err("This message is no longer on this PC.".to_owned()),
+        None => Err(tr("This message is no longer on this PC.").to_owned()),
         Some(raw) => mailalm_mime::attachment(&raw, index).map(|data| {
             let report = mailalm_safety::assess(&mailalm_safety::Input { raw_name: &data.raw_name, name: &data.info.name, declared_type: &data.info.declared_type, bytes: &data.bytes });
             Box::new(Reviewed { data, report })
@@ -195,7 +198,7 @@ fn review(store: &Store, folder: String, uid: u32, index: usize) -> Event {
 
 /// A change made by the user, done in the cache at once; the folders it touched.
 fn apply(store: &Store, change: &Change) -> Result<Vec<String>, String> {
-    let saved = |path: &str, list: &[Summary]| store.save_summaries(path, list).map_err(|e| format!("The change could not be kept: {e}"));
+    let saved = |path: &str, list: &[Summary]| store.save_summaries(path, list).map_err(|e| trf!("The change could not be kept: {error}", error = e));
     match change {
         Change::SetSeen { folder, uids, seen } => {
             let mut list = store.summaries(folder);
@@ -213,12 +216,12 @@ fn apply(store: &Store, change: &Change) -> Result<Vec<String>, String> {
             let mut list = store.summaries(folder);
             list.retain(|s| !uids.contains(&s.uid));
             saved(folder, &list)?;
-            store.remove_messages(folder, uids).map_err(|e| format!("The message could not be removed: {e}"))?;
+            store.remove_messages(folder, uids).map_err(|e| trf!("The message could not be removed: {error}", error = e))?;
             Ok(vec![folder.clone()])
         }
         Change::Move { folder, uids, to } => {
             if !store.folders().iter().any(|f| f.path == *to) {
-                return Err("Mail kept on this PC moves between its own folders only.".to_owned());
+                return Err(tr("Mail kept on this PC moves between its own folders only.").to_owned());
             }
             let mut list = store.summaries(folder);
             let mut batch = Vec::new();
@@ -228,13 +231,13 @@ fn apply(store: &Store, change: &Change) -> Result<Vec<String>, String> {
                     batch.push((raw, s.clone(), text));
                 }
             }
-            store.import_messages(to, batch).map_err(|e| format!("The message could not be moved: {e}"))?;
+            store.import_messages(to, batch).map_err(|e| trf!("The message could not be moved: {error}", error = e))?;
             list.retain(|s| !uids.contains(&s.uid));
             saved(folder, &list)?;
-            store.remove_messages(folder, uids).map_err(|e| format!("The message could not be moved: {e}"))?;
+            store.remove_messages(folder, uids).map_err(|e| trf!("The message could not be moved: {error}", error = e))?;
             Ok(vec![folder.clone(), to.clone()])
         }
-        Change::MarkJunk { .. } => Err("Mail kept on this PC has no junk folder: delete the message instead.".to_owned()),
+        Change::MarkJunk { .. } => Err(tr("Mail kept on this PC has no junk folder: delete the message instead.").to_owned()),
     }
 }
 
@@ -266,9 +269,9 @@ fn delete_folder(store: &Store, path: &str) -> Result<(), String> {
     let scope = FolderScope::WithSubfolders(path.to_owned());
     let all = store.folders();
     let (gone, kept): (Vec<Folder>, Vec<Folder>) = all.into_iter().partition(|f| scope.covers(f));
-    store.save_folders(&kept).map_err(|e| format!("The folder could not be deleted: {e}"))?;
+    store.save_folders(&kept).map_err(|e| trf!("The folder could not be deleted: {error}", error = e))?;
     for f in gone {
-        store.clear_folder(&f.path).map_err(|e| format!("The folder could not be deleted: {e}"))?;
+        store.clear_folder(&f.path).map_err(|e| trf!("The folder could not be deleted: {error}", error = e))?;
     }
     Ok(())
 }
@@ -337,14 +340,16 @@ impl Source {
         }
     }
 
-    pub fn describe(&self) -> String {
-        let name = |p: &Path| p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    /// The title of its import's window ("Importing …").
+    pub fn import_title(&self) -> String {
+        let file = |p: &Path| p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         match self {
-            Source::EmlFiles(f) => format!("{} .eml file{}", f.len(), if f.len() == 1 { "" } else { "s" }),
-            Source::EmlTree(p) => format!("the .eml files of {}", name(p)),
-            Source::MboxFile(p) => format!("the mbox file {}", name(p)),
-            Source::MboxTree(p) => format!("the mbox files of {}", name(p)),
-            Source::Outlook(p) => format!("the Outlook data file {}", name(p)),
+            Source::EmlFiles(f) if f.len() == 1 => tr("Importing 1 .eml file").to_owned(),
+            Source::EmlFiles(f) => trf!("Importing {count} .eml files", count = f.len()),
+            Source::EmlTree(p) => trf!("Importing the .eml files of {name}", name = file(p)),
+            Source::MboxFile(p) => trf!("Importing the mbox file {name}", name = file(p)),
+            Source::MboxTree(p) => trf!("Importing the mbox files of {name}", name = file(p)),
+            Source::Outlook(p) => trf!("Importing the Outlook data file {name}", name = file(p)),
         }
     }
 }
@@ -391,7 +396,7 @@ struct ToStore<'a> {
 impl ToStore<'_> {
     fn flush(&mut self) -> Result<(), String> {
         for (path, messages) in std::mem::take(&mut self.batch) {
-            mailalm_porting::add_to_store(self.store, &path, messages).map_err(|e| format!("The messages could not be kept on this PC: {e}"))?;
+            mailalm_porting::add_to_store(self.store, &path, messages).map_err(|e| trf!("The messages could not be kept on this PC: {error}", error = e))?;
             self.folders.extend(with_parents(&path));
         }
         self.count = 0;
@@ -404,7 +409,7 @@ impl ToStore<'_> {
             }
         }
         sort_folders(&mut list);
-        self.store.save_folders(&list).map_err(|e| format!("The folder list could not be kept: {e}"))
+        self.store.save_folders(&list).map_err(|e| trf!("The folder list could not be kept: {error}", error = e))
     }
 }
 
@@ -429,19 +434,25 @@ impl Sink for ToStore<'_> {
 
 /// What an import's report says, in a sentence.
 pub fn report_text(r: &Report, root: &str) -> String {
-    let mut s = format!("{} message{} imported into {LOCAL_NAME} › {root}", r.messages, if r.messages == 1 { "" } else { "s" });
+    let place = tr(LOCAL_NAME);
+    // Each clause after the first carries its "; " (French puts a no-break space before it).
+    let mut s = if r.messages == 1 {
+        trf!("1 message imported into {place} › {folder}", place = place, folder = root)
+    } else {
+        trf!("{count} messages imported into {place} › {folder}", count = r.messages, place = place, folder = root)
+    };
     let skipped = r.skipped_total();
     if skipped > 0 {
-        s.push_str(&format!("; {skipped} left out (too large, damaged, not mail, or deleted in Thunderbird)"));
+        s.push_str(&trf!("; {count} left out (too large, damaged, not mail, or deleted in Thunderbird)", count = skipped));
     }
     if r.left_out > 0 {
-        s.push_str(&format!("; {} folders or files not read (too deep, too many, or unreadable)", r.left_out));
+        s.push_str(&trf!("; {count} folders or files not read (too deep, too many, or unreadable)", count = r.left_out));
     }
     if r.cancelled {
-        s.push_str("; stopped: what came in before stays");
+        s.push_str(tr("; stopped: what came in before stays"));
     }
     if r.stopped_at_limit {
-        s.push_str("; stopped at a million messages");
+        s.push_str(tr("; stopped at a million messages"));
     }
     s.push('.');
     s
@@ -450,11 +461,11 @@ pub fn report_text(r: &Report, root: &str) -> String {
 impl LocalBox {
     /// Imports `source` into a new top folder of this mailbox, on a thread of its own.
     pub fn import(&self, source: Source, wake: Wake) -> Result<Job, String> {
-        let store = self.store().map_err(|e| format!("The mail kept on this PC can't be opened: {e}"))?;
+        let store = self.store().map_err(|e| trf!("The mail kept on this PC can't be opened: {error}", error = e))?;
         let root = unique_root(&store.folders(), &source.root_name());
         let status = Arc::new(Mutex::new(JobStatus::default()));
         let cancel = Cancel::new();
-        let job = Job { title: format!("Importing {}", source.describe()), status: Arc::clone(&status), cancel: cancel.clone() };
+        let job = Job { title: source.import_title(), status: Arc::clone(&status), cancel: cancel.clone() };
         let back = self.sender();
         let started = std::thread::Builder::new().name("mailalm-import".into()).spawn(move || {
             let mut sink = ToStore { store: &store, root: root.clone(), batch: BTreeMap::new(), count: 0, bytes: 0, folders: BTreeSet::new(), status: &status };
@@ -477,7 +488,7 @@ impl LocalBox {
             let _ = back.send(Command::SyncAll);
             wake();
         });
-        started.map_err(|e| format!("The import could not start: {e}"))?;
+        started.map_err(|e| trf!("The import could not start: {error}", error = e))?;
         Ok(job)
     }
 }
@@ -488,7 +499,7 @@ pub fn export_mbox(store: Store, folder: String, to: PathBuf, wake: Wake) -> Res
     let status = Arc::new(Mutex::new(JobStatus::default()));
     let cancel = Cancel::new();
     let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let job = Job { title: format!("Exporting to {name}"), status: Arc::clone(&status), cancel: cancel.clone() };
+    let job = Job { title: trf!("Exporting to {file}", file = name), status: Arc::clone(&status), cancel: cancel.clone() };
     let started = std::thread::Builder::new().name("mailalm-export".into()).spawn(move || {
         let mut progress = |done: usize, total: usize| {
             if let Ok(mut s) = status.lock() {
@@ -496,22 +507,17 @@ pub fn export_mbox(store: Store, folder: String, to: PathBuf, wake: Wake) -> Res
             }
         };
         let end = match mailalm_porting::mbox::export(&store, &folder, &to, &cancel, &mut progress) {
-            Ok(e) if e.cancelled => Ok("Export cancelled: no file was written.".to_owned()),
-            Ok(e) if e.missing > 0 => Ok(format!(
-                "{} messages written to {}; {} not in MailALM's cache (never opened) were left out: open them, or sync the folder, then export again.",
-                e.written,
-                to.display(),
-                e.missing
-            )),
-            Ok(e) => Ok(format!("{} messages written to {}.", e.written, to.display())),
-            Err(e) => Err(format!("The folder could not be exported: {e}")),
+            Ok(e) if e.cancelled => Ok(tr("Export cancelled: no file was written.").to_owned()),
+            Ok(e) if e.missing > 0 => Ok(trf!("{count} messages written to {path}; {missing} not in MailALM's cache (never opened) were left out: open them, or sync the folder, then export again.", count = e.written, path = to.display(), missing = e.missing)),
+            Ok(e) => Ok(trf!("{count} messages written to {path}.", count = e.written, path = to.display())),
+            Err(e) => Err(trf!("The folder could not be exported: {error}", error = e)),
         };
         if let Ok(mut s) = status.lock() {
             s.finished = Some(end);
         }
         wake();
     });
-    started.map_err(|e| format!("The export could not start: {e}"))?;
+    started.map_err(|e| trf!("The export could not start: {error}", error = e))?;
     Ok(job)
 }
 

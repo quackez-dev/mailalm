@@ -13,6 +13,7 @@ use mailalm_engine::agenda::{self, Due, Reminded, ReminderState};
 use serde::{Deserialize, Serialize};
 
 use crate::agenda::{Ctx, Pim, sources};
+use crate::i18n::{tr, tr_key, trf};
 use crate::settings::Settings;
 use crate::theme as t;
 use crate::time;
@@ -20,9 +21,17 @@ use crate::zones::TzRules;
 
 /// How often the reminders are worked out again.
 const CHECK_EVERY: Duration = Duration::from_secs(30);
-/// The snoozes offered: label, seconds.
-const SNOOZES: [(&str, i64); 8] =
-    [("5 minutes", 300), ("10 minutes", 600), ("15 minutes", 900), ("30 minutes", 1800), ("1 hour", 3600), ("2 hours", 7200), ("1 day", 86_400), ("1 week", 604_800)];
+/// The snoozes offered: label (translated where shown), seconds.
+const SNOOZES: [(&str, i64); 8] = [
+    (tr_key("5 minutes"), 300),
+    (tr_key("10 minutes"), 600),
+    (tr_key("15 minutes"), 900),
+    (tr_key("30 minutes"), 1800),
+    (tr_key("1 hour"), 3600),
+    (tr_key("2 hours"), 7200),
+    (tr_key("1 day"), 86_400),
+    (tr_key("1 week"), 604_800),
+];
 
 /// What is kept on disk.
 #[derive(Default, Serialize, Deserialize)]
@@ -67,7 +76,7 @@ impl Reminders {
         if let Some(dir) = path().parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
-        mailalm_store::write_atomic(&path(), &bytes).map_err(|e| format!("The reminders could not be kept: {e}"))
+        mailalm_store::write_atomic(&path(), &bytes).map_err(|e| trf!("The reminders could not be kept: {error}", error = e))
     }
 }
 
@@ -75,11 +84,11 @@ impl Reminders {
 fn length(s: i64) -> String {
     let s = s.max(0);
     if s < 3600 {
-        format!("{} min", (s + 59) / 60)
+        trf!("{minutes} min", minutes = (s + 59) / 60)
     } else if s < 2 * 86_400 {
-        format!("{} h", (s + 1800) / 3600)
+        trf!("{hours} h", hours = (s + 1800) / 3600)
     } else {
-        format!("{} days", (s + 43_200) / 86_400)
+        trf!("{count} days", count = (s + 43_200) / 86_400)
     }
 }
 
@@ -89,17 +98,17 @@ fn when(d: &Due, now: i64) -> String {
         Reminded::Event { start, end, all_day, .. } => {
             if *all_day {
                 let day = time::local_day(*start);
-                format!("{} {}, all day", time::day_short(day), time::date(day))
+                trf!("{weekday} {date}, all day", weekday = time::day_short(day), date = time::date(day))
             } else if *start > now {
-                format!("in {} ({})", length(start - now), time::clock(*start))
+                trf!("in {length} ({time})", length = length(start - now), time = time::clock(*start))
             } else if *end > now {
-                format!("now, until {}", time::clock(*end))
+                trf!("now, until {time}", time = time::clock(*end))
             } else {
-                format!("ended {} ago", length(now - end))
+                trf!("ended {length} ago", length = length(now - end))
             }
         }
-        Reminded::Task { due: Some(day), .. } => format!("task, due {}", time::date(day.div_euclid(86_400))),
-        Reminded::Task { due: None, .. } => "task".to_owned(),
+        Reminded::Task { due: Some(day), .. } => trf!("task, due {date}", date = time::date(day.div_euclid(86_400))),
+        Reminded::Task { due: None, .. } => tr("task").to_owned(),
     }
 }
 
@@ -130,8 +139,9 @@ impl Pim {
     fn reminders_window(&mut self, ctx: &egui::Context, cx: &Ctx<'_>) {
         let now = time::now();
         let n = self.reminders.due.len();
+        let count = if n > 1 { trf!("{count} reminders", count = n) } else { trf!("{count} reminder", count = n) };
         let builder = ViewportBuilder::default()
-            .with_title(format!("{n} reminder{} · MailALM", if n > 1 { "s" } else { "" }))
+            .with_title(format!("{count} · MailALM"))
             .with_app_id("mailalm")
             .with_inner_size([560.0, 400.0])
             .with_min_inner_size([420.0, 240.0])
@@ -147,17 +157,17 @@ impl Pim {
             egui::CentralPanel::default().frame(Frame::new().fill(t::panel()).inner_margin(Margin::symmetric(14, 12))).show(ui, |ui| {
                 egui::Panel::bottom("mailalm-reminders-all").frame(Frame::new().inner_margin(Margin::symmetric(0, 8))).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ComboBox::from_id_salt("mailalm-reminders-snooze-all").selected_text(SNOOZES.get(r.all).map_or("5 minutes", |s| s.0)).show_ui(ui, |ui| {
+                        ComboBox::from_id_salt("mailalm-reminders-snooze-all").selected_text(SNOOZES.get(r.all).map_or(tr("5 minutes"), |s| tr(s.0))).show_ui(ui, |ui| {
                             for (i, (label, _)) in SNOOZES.iter().enumerate() {
-                                ui.selectable_value(&mut r.all, i, *label);
+                                ui.selectable_value(&mut r.all, i, tr(*label));
                             }
                         });
-                        if ui.button("Snooze all").clicked() {
+                        if ui.button(tr("Snooze all")).clicked() {
                             let secs = SNOOZES.get(r.all).map_or(300, |s| s.1);
                             snooze.extend(r.due.iter().map(|d| (d.clone(), now + secs)));
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.button("Dismiss all").clicked() {
+                            if ui.button(tr("Dismiss all")).clicked() {
                                 dismiss.extend(r.due.iter().cloned());
                             }
                         });
@@ -171,7 +181,7 @@ impl Pim {
                                 let (bar, _) = ui.allocate_exact_size(vec2(4.0, 34.0), Sense::hover());
                                 ui.painter().rect_filled(bar, 1.0, cx.color(d.account));
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new(if d.title.is_empty() { "(no title)" } else { d.title.as_str() }).strong());
+                                    ui.label(RichText::new(if d.title.is_empty() { tr("(no title)") } else { d.title.as_str() }).strong());
                                     let mut line = format!("{} · {}", when(d, now), cx.name(d.account));
                                     if let Reminded::Event { location, .. } = &d.what
                                         && !location.is_empty()
@@ -181,16 +191,16 @@ impl Pim {
                                     ui.label(RichText::new(line).size(12.0).color(t::muted()));
                                 });
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui.button("Dismiss").clicked() {
+                                    if ui.button(tr("Dismiss")).clicked() {
                                         dismiss.push(d.clone());
                                     }
                                     let choice = r.chosen.entry(d.key.clone()).or_insert(0);
-                                    if ui.button("Snooze").clicked() {
+                                    if ui.button(tr("Snooze")).clicked() {
                                         snooze.push((d.clone(), now + SNOOZES.get(*choice).map_or(300, |s| s.1)));
                                     }
-                                    ComboBox::from_id_salt(("mailalm-reminder-snooze", d.key.as_str())).width(100.0).selected_text(SNOOZES.get(*choice).map_or("5 minutes", |s| s.0)).show_ui(ui, |ui| {
+                                    ComboBox::from_id_salt(("mailalm-reminder-snooze", d.key.as_str())).width(100.0).selected_text(SNOOZES.get(*choice).map_or(tr("5 minutes"), |s| tr(s.0))).show_ui(ui, |ui| {
                                         for (i, (label, _)) in SNOOZES.iter().enumerate() {
-                                            ui.selectable_value(choice, i, *label);
+                                            ui.selectable_value(choice, i, tr(*label));
                                         }
                                     });
                                 });

@@ -24,6 +24,8 @@ use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::{PixmapSettings, RenderCache, RenderSettings};
 use mailalm_safety::Preview;
 
+use crate::i18n::{tr, trf};
+
 /// The largest picture decoded.
 const MAX_IMAGE_INPUT: usize = 20 << 20;
 /// The most pixels a picture may have (40 megapixels).
@@ -88,12 +90,12 @@ fn render(kind: Preview, bytes: Arc<Vec<u8>>, side: u32, fonts: Fonts) -> Render
 /// decoding.
 fn decode_pixels(data: &[u8], side: u32) -> Result<egui::ColorImage, String> {
     if data.len() > MAX_IMAGE_INPUT {
-        return Err(format!("The picture is larger than {} MB: it is not previewed. Save it to look at it.", MAX_IMAGE_INPUT >> 20));
+        return Err(trf!("The picture is larger than {size} MB: it is not previewed. Save it to look at it.", size = MAX_IMAGE_INPUT >> 20));
     }
-    let unreadable = |_| "The picture could not be read.".to_owned();
-    let (w, h) = image::ImageReader::new(Cursor::new(data)).with_guessed_format().map_err(unreadable)?.into_dimensions().map_err(|_| "The picture could not be read.".to_owned())?;
+    let unreadable = |_| tr("The picture could not be read.").to_owned();
+    let (w, h) = image::ImageReader::new(Cursor::new(data)).with_guessed_format().map_err(unreadable)?.into_dimensions().map_err(|_| tr("The picture could not be read.").to_owned())?;
     if u64::from(w).saturating_mul(u64::from(h)) > MAX_PIXELS || w > MAX_IMAGE_SIDE || h > MAX_IMAGE_SIDE {
-        return Err(format!("The picture is {w} x {h} pixels, more than MailALM previews (40 megapixels)."));
+        return Err(trf!("The picture is {width} x {height} pixels, more than MailALM previews (40 megapixels).", width = w, height = h));
     }
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_SIDE);
@@ -101,7 +103,7 @@ fn decode_pixels(data: &[u8], side: u32) -> Result<egui::ColorImage, String> {
     limits.max_alloc = Some(MAX_PIXELS * 4 + (64 << 20));
     let mut reader = image::ImageReader::new(Cursor::new(data)).with_guessed_format().map_err(unreadable)?;
     reader.limits(limits);
-    let decoded = reader.decode().map_err(|e| format!("The picture could not be decoded: {e}"))?;
+    let decoded = reader.decode().map_err(|e| trf!("The picture could not be decoded: {error}", error = e))?;
     let img = if decoded.width() > side || decoded.height() > side { decoded.thumbnail(side, side) } else { decoded }.to_rgba8();
     let size = [img.width() as usize, img.height() as usize];
     Ok(egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()))
@@ -111,10 +113,10 @@ fn decode_pixels(data: &[u8], side: u32) -> Result<egui::ColorImage, String> {
 /// (and on its own thread).
 fn pdf_pages(data: Arc<Vec<u8>>, side: u32, fonts: Fonts) -> Result<(Vec<egui::ColorImage>, usize), String> {
     if data.len() > MAX_PDF {
-        return Err(format!("The PDF is larger than {} MB: it is not previewed. Save it to look at it.", MAX_PDF >> 20));
+        return Err(trf!("The PDF is larger than {size} MB: it is not previewed. Save it to look at it.", size = MAX_PDF >> 20));
     }
     if !data.windows(5).take(1024).any(|w| w == b"%PDF-") {
-        return Err("This is not a PDF MailALM can draw.".to_owned());
+        return Err(tr("This is not a PDF MailALM can draw.").to_owned());
     }
     let regular: Option<FontData> = fonts.0.map(|f| f as FontData);
     let bold: Option<FontData> = fonts.1.map(|f| f as FontData).or_else(|| regular.clone());
@@ -151,8 +153,8 @@ fn pdf_pages(data: Arc<Vec<u8>>, side: u32, fonts: Fonts) -> Result<(Vec<egui::C
     }));
     match rendered {
         Ok(Some((pages, total))) if !pages.is_empty() => Ok((pages, total)),
-        Ok(_) => Err("The PDF could not be drawn.".to_owned()),
-        Err(_) => Err("The PDF could not be drawn (the renderer stopped on it).".to_owned()),
+        Ok(_) => Err(tr("The PDF could not be drawn.").to_owned()),
+        Err(_) => Err(tr("The PDF could not be drawn (the renderer stopped on it).").to_owned()),
     }
 }
 
@@ -202,7 +204,8 @@ fn text(bytes: &[u8]) -> String {
     };
     let mut t = mailalm_mime::clean_text(&s);
     if bytes.len() > MAX_TEXT {
-        t.push_str(&format!("\n\n[MailALM: only the first {} KB are shown.]", MAX_TEXT >> 10));
+        t.push_str("\n\n");
+        t.push_str(&trf!("[MailALM: only the first {size} KB are shown.]", size = MAX_TEXT >> 10));
     }
     t
 }

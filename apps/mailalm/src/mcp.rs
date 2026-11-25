@@ -23,6 +23,7 @@ use mailalm_model::rules::{self as mr, LOCAL_PREFIX, Where};
 use mailalm_model::{Account, AccountId, Change, Folder, FolderRole, FolderScope, Person, Provider, Query, Summary};
 
 use crate::agenda::AccountPim;
+use crate::i18n::{tr, trf};
 
 /// The compose window number drafts made by the MCP are saved under (no window has it).
 pub const MCP_COMPOSE: u64 = u64::MAX;
@@ -553,7 +554,7 @@ impl Backend for AppBackend<'_> {
         let o = self.outgoing(args)?;
         let subject = o.subject.clone();
         self.send(AccountId(args.account), Command::SaveDraft { compose: MCP_COMPOSE, message: Box::new(o), replace: None })?;
-        self.done.push(format!("MCP: a draft \"{subject}\" is being saved in Drafts."));
+        self.done.push(trf!("MCP: a draft \"{subject}\" is being saved in Drafts.", subject = subject));
         Ok(done("The draft is being saved in the account's Drafts folder."))
     }
 
@@ -566,8 +567,13 @@ impl Backend for AppBackend<'_> {
         for c in Self::per_folder(&args.messages, |folder, uids| (folder != to).then(|| Change::Move { folder, uids, to: to.clone() })) {
             self.send(id, Command::Apply(c))?;
         }
-        let what = format!("{} moved to {}", plural(args.messages.len(), "message"), args.folder);
-        self.done.push(format!("MCP: {what}."));
+        let n = args.messages.len();
+        let what = format!("{} moved to {}", plural(n, "message"), args.folder);
+        self.done.push(if n == 1 {
+            trf!("MCP: 1 message moved to {folder}.", folder = args.folder)
+        } else {
+            trf!("MCP: {count} messages moved to {folder}.", count = n, folder = args.folder)
+        });
         Ok(done(what))
     }
 
@@ -625,7 +631,7 @@ impl Backend for AppBackend<'_> {
         };
         let name = calendar.name.clone();
         self.send(id, Command::Pim(PimCommand::SaveEvent { event: Box::new(event), notify: false }))?;
-        self.done.push(format!("MCP: the tentative event \"{}\" was added to {name}.", args.title));
+        self.done.push(trf!("MCP: the tentative event \"{title}\" was added to {calendar}.", title = args.title, calendar = name));
         Ok(done(format!("The tentative event was added to the calendar \"{name}\"")))
     }
 
@@ -640,7 +646,7 @@ impl Backend for AppBackend<'_> {
         let task = Task { list: list.id.clone(), title: args.title.clone(), notes: args.notes.clone(), due: args.due.map(|d| d.div_euclid(86_400) * 86_400), ..Task::default() };
         let name = list.name.clone();
         self.send(id, Command::Pim(PimCommand::SaveTask(Box::new(task))))?;
-        self.done.push(format!("MCP: the task \"{}\" was added to {name}.", args.title));
+        self.done.push(trf!("MCP: the task \"{title}\" was added to {list}.", title = args.title, list = name));
         Ok(done(format!("The task was added to the list \"{name}\"")))
     }
 
@@ -648,7 +654,7 @@ impl Backend for AppBackend<'_> {
         let o = self.outgoing(&args.0)?;
         let subject = o.subject.clone();
         self.send(AccountId(args.0.account), Command::Send(Box::new(o)))?;
-        self.done.push(format!("MCP: sending \"{subject}\" (confirmed)."));
+        self.done.push(trf!("MCP: sending \"{subject}\" (confirmed).", subject = subject));
         Ok(done("The message is being sent"))
     }
 
@@ -661,8 +667,13 @@ impl Backend for AppBackend<'_> {
         for c in Self::per_folder(&args.messages, |folder, uids| Some(Change::Move { folder, uids, to: trash.path.clone() })) {
             self.send(id, Command::Apply(c))?;
         }
-        let what = format!("{} moved to the Trash", plural(args.messages.len(), "message"));
-        self.done.push(format!("MCP: {what} (confirmed)."));
+        let n = args.messages.len();
+        let what = format!("{} moved to the Trash", plural(n, "message"));
+        self.done.push(if n == 1 {
+            tr("MCP: 1 message moved to the Trash (confirmed).").to_owned()
+        } else {
+            trf!("MCP: {count} messages moved to the Trash (confirmed).", count = n)
+        });
         Ok(done(what))
     }
 
@@ -673,7 +684,7 @@ impl Backend for AppBackend<'_> {
         }
         let id = a.id;
         self.send(id, Command::Senders(SenderCommand::Block(args.address.clone())))?;
-        self.done.push(format!("MCP: {} is being blocked by a Gmail filter (confirmed).", args.address));
+        self.done.push(trf!("MCP: {address} is being blocked by a Gmail filter (confirmed).", address = args.address));
         Ok(done(format!("A Gmail filter now sends {}'s messages to Spam", args.address)))
     }
 
@@ -702,7 +713,7 @@ impl Backend for AppBackend<'_> {
         let title = event.title.clone();
         let command = PimCommand::Respond { event: Box::new(event.clone()), answer, send: args.notify_organizer, comment: args.comment.clone(), proposal: None };
         self.send(id, Command::Pim(command))?;
-        self.done.push(format!("MCP: the invitation \"{title}\" was answered (confirmed)."));
+        self.done.push(trf!("MCP: the invitation \"{title}\" was answered (confirmed).", title = title));
         Ok(done("The invitation was answered"))
     }
 
@@ -730,7 +741,7 @@ impl Backend for AppBackend<'_> {
             ct::RuleChange::Delete { id: rule_id } => RuleCommand::Delete { id: rule_id.clone(), place: place_of_id(rule_id) },
         };
         self.send(id, Command::Rules(command))?;
-        self.done.push("MCP: a rule change was sent (confirmed); Settings, Rules shows the result.".to_owned());
+        self.done.push(tr("MCP: a rule change was sent (confirmed); Settings, Rules shows the result.").to_owned());
         Ok(done("The rule change was sent to the account; an error, if any, shows in MailALM"))
     }
 
@@ -764,7 +775,7 @@ impl Backend for AppBackend<'_> {
             }
             outcomes.push(ct::TriageOutcome { index, accepted: true, applied: result.is_ok(), error: result.err().unwrap_or_default() });
         }
-        self.done.push(format!("MCP: triage applied to {} of {} messages.", applied, args.proposals.len()));
+        self.done.push(trf!("MCP: triage applied to {applied} of {total} messages.", applied = applied, total = args.proposals.len()));
         Ok(ct::TriageAnswer { outcomes })
     }
 }
@@ -783,27 +794,73 @@ pub struct JournalLine {
     pub detail: String,
 }
 
+/// A tool's short title as the interface shows it (`Tool::title` stays English, for the agent).
+pub fn tool_title(tool: mailalm_control::Tool) -> &'static str {
+    use mailalm_control::Tool as T;
+    match tool {
+        T::ListAccounts => tr("List accounts"),
+        T::ListFolders => tr("List folders"),
+        T::Search => tr("Search mail"),
+        T::ReadMessage => tr("Read a message"),
+        T::ReadThread => tr("Read a thread"),
+        T::ListAttachments => tr("List attachments"),
+        T::ReadCalendar => tr("Read the calendar"),
+        T::Availability => tr("Availability"),
+        T::ListTasks => tr("List tasks"),
+        T::ListContacts => tr("List contacts"),
+        T::CreateDraft => tr("Create a draft"),
+        T::MoveMessages => tr("Move messages"),
+        T::MarkMessages => tr("Mark messages"),
+        T::AddCategory => tr("Add a category"),
+        T::CreateEvent => tr("Create a tentative event"),
+        T::CreateTask => tr("Create a task"),
+        T::SendMessage => tr("Send a message"),
+        T::DeleteMessages => tr("Delete messages"),
+        T::BlockSender => tr("Block a sender"),
+        T::AnswerInvitation => tr("Answer an invitation"),
+        T::ChangeRule => tr("Change a rule"),
+        T::ProposeTriage => tr("Propose a triage"),
+    }
+}
+
+/// An error code of the journal in words (its wire name with spaces, in English).
+fn error_code_text(code: mailalm_control::ErrorCode) -> &'static str {
+    use mailalm_control::ErrorCode as E;
+    match code {
+        E::Unauthorized => tr("unauthorized"),
+        E::BadRequest => tr("bad request"),
+        E::LineTooLong => tr("line too long"),
+        E::UnknownTool => tr("unknown tool"),
+        E::BadArgs => tr("bad args"),
+        E::AccountHidden => tr("account hidden"),
+        E::NotFound => tr("not found"),
+        E::NotSupported => tr("not supported"),
+        E::NeedsConfirmation => tr("needs confirmation"),
+        E::Declined => tr("declined"),
+        E::TimeoutNotRun => tr("timeout not run"),
+        E::OutcomeUnknown => tr("outcome unknown"),
+        E::Failed => tr("failed"),
+    }
+}
+
 /// How the page shows a journal entry; `name` gives an account's name (`None`: removed since).
 pub fn journal_line(e: &JournalEntry, name: impl Fn(u32) -> Option<String>, time: impl Fn(i64) -> String) -> JournalLine {
     let accounts = if e.accounts.is_empty() {
-        "every visible account".to_owned()
+        tr("every visible account").to_owned()
     } else {
-        e.accounts.iter().map(|a| name(*a).unwrap_or_else(|| format!("account {a}"))).collect::<Vec<_>>().join(", ")
+        e.accounts.iter().map(|a| name(*a).unwrap_or_else(|| trf!("account {id}", id = a))).collect::<Vec<_>>().join(", ")
     };
     let (outcome, ok) = match e.outcome {
-        Outcome::Ok => ("done".to_owned(), true),
-        Outcome::Expired => ("expired: nothing was done".to_owned(), false),
-        Outcome::Error(code) => {
-            let code = serde_json::to_value(code).ok().and_then(|v| v.as_str().map(|s| s.replace('_', " "))).unwrap_or_else(|| "error".to_owned());
-            (format!("refused: {code}"), false)
-        }
+        Outcome::Ok => (tr("done").to_owned(), true),
+        Outcome::Expired => (tr("expired: nothing was done").to_owned(), false),
+        Outcome::Error(code) => (trf!("refused: {reason}", reason = error_code_text(code)), false),
     };
     let confirmation = match e.confirmation {
         Confirmation::NotNeeded => "",
-        Confirmation::Given => "confirmed by you",
-        Confirmation::Declined => "declined by you",
+        Confirmation::Given => tr("confirmed by you"),
+        Confirmation::Declined => tr("declined by you"),
     };
-    JournalLine { time: time(e.time), tool: e.tool.title(), accounts, outcome, ok, confirmation, detail: e.detail.clone() }
+    JournalLine { time: time(e.time), tool: tool_title(e.tool), accounts, outcome, ok, confirmation, detail: e.detail.clone() }
 }
 
 #[cfg(test)]

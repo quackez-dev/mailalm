@@ -13,6 +13,7 @@ use mailalm_model::AccountId;
 
 use super::MailApp;
 use crate::compose::{AccountChoice, Compose, ComposeAction, ComposeCtx};
+use crate::i18n::{tr, trf};
 use crate::send_queue::{Schedule, Scheduled, UndoQueue, sent_late};
 use crate::settings::Settings;
 use crate::theme as t;
@@ -91,7 +92,7 @@ impl MailApp {
                     let now = ctx.input(|i| i.time);
                     let subject = message.subject.clone();
                     self.sending.undo.push(Waiting { compose, message }, now, f64::from(delay));
-                    self.say(format!("\"{subject}\" goes in {delay} seconds: Undo brings it back."));
+                    self.say(trf!("\"{subject}\" goes in {delay} seconds: Undo brings it back.", subject = subject, delay = delay));
                 }
                 ComposeAction::Schedule(message, at) => {
                     let draft = self.composes.get(n).and_then(|c| c.draft.clone());
@@ -102,7 +103,7 @@ impl MailApp {
                         Ok(_) => {
                             let mut c = self.composes.remove(n);
                             c.close_antidote();
-                            self.say(format!("\"{}\" will go on {}. MailALM sends it then if it is running, else as soon as it starts.", message.subject, time::long(at)));
+                            self.say(trf!("\"{subject}\" will go on {date}. MailALM sends it then if it is running, else as soon as it starts.", subject = message.subject, date = time::long(at)));
                         }
                         Err(e) => {
                             if let Some(c) = self.composes.get_mut(n) {
@@ -146,9 +147,9 @@ impl MailApp {
         if !self.engine.send(account, command) {
             c.draft = replace.map(|id| (account, id));
             if c.closing {
-                c.reopen_with_error("The account is not running: the draft could not be kept on the server.".to_owned());
+                c.reopen_with_error(tr("The account is not running: the draft could not be kept on the server.").to_owned());
             } else {
-                c.draft_saved(Err("The account is not running: the draft could not be kept on the server.".to_owned()));
+                c.draft_saved(Err(tr("The account is not running: the draft could not be kept on the server.").to_owned()));
             }
         }
     }
@@ -166,7 +167,7 @@ impl MailApp {
         match (closing, result) {
             (true, Ok(_)) => {
                 let c = self.composes.remove(n);
-                self.say(format!("\"{}\" was kept in Drafts.", c.subject().trim()));
+                self.say(trf!("\"{subject}\" was kept in Drafts.", subject = c.subject().trim()));
             }
             (true, Err(e)) => {
                 if let Some(c) = self.composes.get_mut(n) {
@@ -218,9 +219,9 @@ impl MailApp {
             if let Some((a, id)) = compose.draft.take() {
                 self.engine.send(a, Command::DeleteDraft(id));
             }
-            self.say(format!("Sending \"{subject}\"…"));
+            self.say(trf!("Sending \"{subject}\"…", subject = subject));
         } else {
-            compose.reopen_with_error("The account is not running: the message was not sent.".to_owned());
+            compose.reopen_with_error(tr("The account is not running: the message was not sent.").to_owned());
             self.composes.push(*compose);
         }
     }
@@ -228,7 +229,7 @@ impl MailApp {
     /// A scheduled message whose time came (or passed while MailALM was closed).
     fn send_scheduled(&mut self, s: Scheduled, now: i64) {
         let Some(message) = s.message.outgoing() else {
-            self.warn(format!("The message scheduled for {} was damaged on disk and was not sent.", time::long(s.at)));
+            self.warn(trf!("The message scheduled for {date} was damaged on disk and was not sent.", date = time::long(s.at)));
             return;
         };
         let subject = message.subject.clone();
@@ -237,14 +238,14 @@ impl MailApp {
                 self.engine.send(s.account, Command::DeleteDraft(id));
             }
             if sent_late(s.at, now) {
-                self.sending.late.push(format!("\"{subject}\", planned for {}", time::long(s.at)));
+                self.sending.late.push(trf!("\"{subject}\", planned for {date}", subject = subject, date = time::long(s.at)));
             } else {
-                self.say(format!("Scheduled message sent: \"{subject}\"."));
+                self.say(trf!("Scheduled message sent: \"{subject}\".", subject = subject));
             }
         } else {
             let id = self.next_compose;
             self.next_compose += 1;
-            let text = format!("The message scheduled for {} was not sent: its account is not running.", time::long(s.at));
+            let text = trf!("The message scheduled for {date} was not sent: its account is not running.", date = time::long(s.at));
             let plain = message.html.is_none();
             self.composes.push(Compose::new(id, s.account, &message, Some(text.clone()), None, plain));
             self.warn(text);
@@ -268,27 +269,30 @@ impl MailApp {
             Frame::new().fill(t::raised()).stroke(Stroke::new(1.0, t::line())).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
                 for (id, subject, left) in &waiting {
                     ui.horizontal(|ui| {
-                        let subject = if subject.trim().is_empty() { "(no subject)" } else { subject.as_str() };
-                        ui.label(RichText::new(format!("Sending \"{subject}\" in {} s", left.ceil() as u64)).strong());
-                        if ui.button("Undo").clicked() {
+                        let subject = if subject.trim().is_empty() { tr("(no subject)") } else { subject.as_str() };
+                        let seconds = left.ceil() as u64;
+                        ui.label(RichText::new(trf!("Sending \"{subject}\" in {seconds} s", subject = subject, seconds = seconds)).strong());
+                        if ui.button(tr("Undo")).clicked() {
                             undo = Some(*id);
                         }
-                        if ui.small_button("Send now").clicked() {
+                        if ui.small_button(tr("Send now")).clicked() {
                             now = Some(*id);
                         }
                     });
                 }
                 if !scheduled.is_empty() {
-                    let _ = ui.menu_button(format!("{} scheduled message{}", scheduled.len(), if scheduled.len() == 1 { "" } else { "s" }), |ui| {
-                        ui.label(RichText::new("Sent by MailALM at their time if it is running, else as soon as it starts.").size(11.5).color(t::faint()));
+                    let count = scheduled.len();
+                    let label = if count == 1 { tr("1 scheduled message").to_owned() } else { trf!("{count} scheduled messages", count = count) };
+                    let _ = ui.menu_button(label, |ui| {
+                        ui.label(RichText::new(tr("Sent by MailALM at their time if it is running, else as soon as it starts.")).size(11.5).color(t::faint()));
                         for (id, subject, at) in &scheduled {
                             ui.horizontal(|ui| {
-                                ui.label(format!("{} · {}", time::long(*at), if subject.trim().is_empty() { "(no subject)" } else { subject.as_str() }));
-                                if ui.small_button("Edit").on_hover_text("Take it out of the schedule, back in its window").clicked() {
+                                ui.label(format!("{} · {}", time::long(*at), if subject.trim().is_empty() { tr("(no subject)") } else { subject.as_str() }));
+                                if ui.small_button(tr("Edit")).on_hover_text(tr("Take it out of the schedule, back in its window")).clicked() {
                                     edit = Some(*id);
                                     ui.close();
                                 }
-                                if ui.small_button("Send now").clicked() {
+                                if ui.small_button(tr("Send now")).clicked() {
                                     send_scheduled = Some(*id);
                                     ui.close();
                                 }
@@ -302,7 +306,7 @@ impl MailApp {
             && let Some(w) = self.sending.undo.take(id)
         {
             let mut c = *w.compose;
-            c.reopen("Not sent. Change it and send it again, or discard it.");
+            c.reopen(tr("Not sent. Change it and send it again, or discard it."));
             self.composes.push(c);
         }
         if let Some(id) = now
@@ -320,10 +324,10 @@ impl MailApp {
                         self.next_compose += 1;
                         let mut c = Compose::new(cid, s.account, &message, None, None, message.html.is_none());
                         c.draft = s.draft.map(|d| (s.account, d));
-                        c.reopen("Taken out of the schedule: send it, or schedule it again.");
+                        c.reopen(tr("Taken out of the schedule: send it, or schedule it again."));
                         self.composes.push(c);
                     }
-                    None => self.warn("This scheduled message was damaged on disk."),
+                    None => self.warn(tr("This scheduled message was damaged on disk.")),
                 },
                 Ok(None) => {}
                 Err(e) => self.warn(e),
@@ -339,15 +343,15 @@ impl MailApp {
         let mut ok = false;
         let m = egui::Modal::new(Id::unique("mailalm-sent-late")).show(ctx, |ui| {
             ui.set_width(480.0);
-            ui.heading("Scheduled messages sent late");
+            ui.heading(tr("Scheduled messages sent late"));
             ui.add_space(6.0);
-            ui.label("Their time passed while MailALM was closed: MailALM sent them as it started, just now.");
+            ui.label(tr("Their time passed while MailALM was closed: MailALM sent them as it started, just now."));
             ui.add_space(6.0);
             for line in &self.sending.late {
                 ui.label(RichText::new(line).strong());
             }
             ui.add_space(10.0);
-            if ui.button("OK").clicked() {
+            if ui.button(tr("OK")).clicked() {
                 ok = true;
             }
         });

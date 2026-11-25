@@ -8,6 +8,7 @@ use mailalm_engine::Command;
 use mailalm_model::{AccountId, FolderScope, Summary};
 
 use super::{MailApp, Page, SearchState, View, folder_row, section};
+use crate::i18n::{tr, trf};
 use crate::icons::{self, Icon};
 use crate::local::{LOCAL, LOCAL_NAME};
 use crate::search::{self, AccountsChoice, FoldersChoice, Hit, OPERATORS, Scope};
@@ -36,7 +37,7 @@ impl MailApp {
     }
 
     fn name_of(&self, id: AccountId) -> String {
-        if id == LOCAL { LOCAL_NAME.to_owned() } else { self.account(id).map(|a| a.name.clone()).unwrap_or_default() }
+        if id == LOCAL { tr(LOCAL_NAME).to_owned() } else { self.account(id).map(|a| a.name.clone()).unwrap_or_default() }
     }
 
     /// What the scope chosen covers now.
@@ -54,31 +55,39 @@ impl MailApp {
         let accounts = match s.accounts {
             AccountsChoice::Current => match &self.view {
                 View::Folder(id, _) => self.name_of(*id),
-                _ => self.ws.focused_account().map_or_else(|| "All accounts".to_owned(), |a| a.name.clone()),
+                _ => self.ws.focused_account().map_or_else(|| tr("All accounts").to_owned(), |a| a.name.clone()),
             },
-            AccountsChoice::Chosen => format!("{} accounts", s.chosen.len()),
-            AccountsChoice::All => "All accounts".to_owned(),
+            AccountsChoice::Chosen => trf!("{count} accounts", count = s.chosen.len()),
+            AccountsChoice::All => tr("All accounts").to_owned(),
         };
         let folders = match s.folders {
-            FoldersChoice::Current => " · this folder",
-            FoldersChoice::WithSubfolders => " · this folder and under",
-            FoldersChoice::Account => "",
+            FoldersChoice::Current => Some(tr("this folder")),
+            FoldersChoice::WithSubfolders => Some(tr("this folder and under")),
+            FoldersChoice::Account => None,
         };
-        let server = if s.server { " · + server" } else { "" };
-        format!("{accounts}{folders}{server}")
+        let mut label = accounts;
+        if let Some(f) = folders {
+            label.push_str(" · ");
+            label.push_str(f);
+        }
+        if s.server {
+            label.push_str(" · ");
+            label.push_str(tr("+ server"));
+        }
+        label
     }
 
     /// The search box and its scope menu, right to left in the command bar.
     pub(super) fn search_bar(&mut self, ui: &mut Ui) {
-        if self.search_state.is_some() && ui.small_button("Clear").on_hover_text("Back to the folder").clicked() {
+        if self.search_state.is_some() && ui.small_button(tr("Clear")).on_hover_text(tr("Back to the folder")).clicked() {
             self.clear_search();
         }
-        if self.search_state.as_ref().is_some_and(|s| s.name.is_none()) && ui.small_button("Keep…").on_hover_text("Keep this search as a search folder").clicked() {
+        if self.search_state.as_ref().is_some_and(|s| s.name.is_none()) && ui.small_button(tr("Keep…")).on_hover_text(tr("Keep this search as a search folder")).clicked() {
             self.search_ui.saving = Some(String::new());
             self.search_ui.error = None;
         }
         self.scope_menu(ui);
-        let edit = ui.add(TextEdit::singleline(&mut self.search).hint_text("Search — from:, subject:, has:attachment").desired_width(240.0)).on_hover_text(OPERATORS);
+        let edit = ui.add(TextEdit::singleline(&mut self.search).hint_text(tr("Search — from:, subject:, has:attachment")).desired_width(240.0)).on_hover_text(tr(OPERATORS));
         if edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
             self.run_search();
         }
@@ -93,9 +102,9 @@ impl MailApp {
         let in_folder = matches!(self.view, View::Folder(..));
         let scope = &mut self.search_ui.scope;
         let _ = ui.menu_button((RichText::new(label).size(12.0).color(t::muted()), icons::atom(Icon::ChevronDown)), |ui| {
-            ui.label(RichText::new("ACCOUNTS").size(11.0).strong().color(t::faint()));
-            ui.radio_value(&mut scope.accounts, AccountsChoice::Current, "The current account");
-            ui.radio_value(&mut scope.accounts, AccountsChoice::Chosen, "The accounts ticked below");
+            ui.label(RichText::new(tr("ACCOUNTS")).size(11.0).strong().color(t::faint()));
+            ui.radio_value(&mut scope.accounts, AccountsChoice::Current, tr("The current account"));
+            ui.radio_value(&mut scope.accounts, AccountsChoice::Chosen, tr("The accounts ticked below"));
             if scope.accounts == AccountsChoice::Chosen {
                 ui.indent("mailalm-search-accounts", |ui| {
                     for (id, name) in &accounts {
@@ -109,24 +118,23 @@ impl MailApp {
                     }
                 });
             }
-            ui.radio_value(&mut scope.accounts, AccountsChoice::All, "All accounts");
+            ui.radio_value(&mut scope.accounts, AccountsChoice::All, tr("All accounts"));
             ui.separator();
-            ui.label(RichText::new("FOLDERS").size(11.0).strong().color(t::faint()));
+            ui.label(RichText::new(tr("FOLDERS")).size(11.0).strong().color(t::faint()));
             ui.add_enabled_ui(in_folder, |ui| {
-                ui.radio_value(&mut scope.folders, FoldersChoice::Current, "The current folder");
-                ui.radio_value(&mut scope.folders, FoldersChoice::WithSubfolders, "The current folder and its subfolders");
+                ui.radio_value(&mut scope.folders, FoldersChoice::Current, tr("The current folder"));
+                ui.radio_value(&mut scope.folders, FoldersChoice::WithSubfolders, tr("The current folder and its subfolders"));
             });
-            ui.radio_value(&mut scope.folders, FoldersChoice::Account, "The whole account");
+            ui.radio_value(&mut scope.folders, FoldersChoice::Account, tr("The whole account"));
             if !in_folder {
-                ui.label(RichText::new("Open a folder to search it alone.").size(11.0).color(t::faint()));
+                ui.label(RichText::new(tr("Open a folder to search it alone.")).size(11.0).color(t::faint()));
             }
             ui.separator();
-            ui.checkbox(&mut scope.server, "Search the server too").on_hover_text(
-                "Outlook and Gmail search the whole mailbox, an IMAP server its folders: what they find that MailALM doesn't have comes below, \"from the server\".",
-            );
+            ui.checkbox(&mut scope.server, tr("Search the server too"))
+                .on_hover_text(tr("Outlook and Gmail search the whole mailbox, an IMAP server its folders: what they find that MailALM doesn't have comes below, \"from the server\"."));
             ui.separator();
-            ui.label(RichText::new("OPERATORS").size(11.0).strong().color(t::faint()));
-            ui.label(RichText::new(OPERATORS).size(11.5).color(t::muted()));
+            ui.label(RichText::new(tr("OPERATORS")).size(11.0).strong().color(t::faint()));
+            ui.label(RichText::new(tr(OPERATORS)).size(11.5).color(t::muted()));
         });
     }
 
@@ -139,7 +147,7 @@ impl MailApp {
         }
         let targets = self.search_targets();
         if targets.is_empty() {
-            self.say("No account is ticked in the search's scope.");
+            self.say(tr("No account is ticked in the search's scope."));
             return;
         }
         let server = self.search_ui.scope.server;
@@ -209,13 +217,15 @@ impl MailApp {
     pub(super) fn search_subtitle(&self) -> String {
         let Some(s) = &self.search_state else { return String::new() };
         if s.waiting > 0 {
-            return "searching…".to_owned();
+            return tr("searching…").to_owned();
         }
-        let mut text = format!("{} found in MailALM", s.hits.len());
+        let mut text = trf!("{count} found in MailALM", count = s.hits.len());
         if s.server_waiting > 0 {
-            text.push_str(" · asking the servers…");
+            text.push_str(" · ");
+            text.push_str(tr("asking the servers…"));
         } else if !s.server.is_empty() {
-            text.push_str(&format!(" · {} more from the server", s.server.len()));
+            text.push_str(" · ");
+            text.push_str(&trf!("{count} more from the server", count = s.server.len()));
         }
         if let Some(e) = s.server_errors.first() {
             text.push_str(&format!(" · {e}"));
@@ -229,7 +239,7 @@ impl MailApp {
     pub(super) fn saved_searches_pane(&mut self, ui: &mut Ui) {
         let names: Vec<String> = self.settings.saved_searches.iter().map(|s| s.name.clone()).collect();
         if !names.is_empty() {
-            section(ui, "SEARCH FOLDERS");
+            section(ui, tr("SEARCH FOLDERS"));
         }
         let open_name = match (&self.view, &self.search_state) {
             (View::Search, Some(s)) => s.name.clone(),
@@ -238,17 +248,17 @@ impl MailApp {
         let mut open: Option<usize> = None;
         let mut delete: Option<usize> = None;
         for (i, name) in names.iter().enumerate() {
-            let row = folder_row(ui, 10.0, open_name.as_deref() == Some(name.as_str()), name, 0).on_hover_text("A search folder: right-click to rename or delete it");
+            let row = folder_row(ui, 10.0, open_name.as_deref() == Some(name.as_str()), name, 0).on_hover_text(tr("A search folder: right-click to rename or delete it"));
             if row.clicked() {
                 open = Some(i);
             }
             row.context_menu(|ui| {
-                if ui.button("Rename…").clicked() {
+                if ui.button(tr("Rename…")).clicked() {
                     self.search_ui.renaming = Some((i, name.clone()));
                     self.search_ui.error = None;
                     ui.close();
                 }
-                if ui.button("Delete").clicked() {
+                if ui.button(tr("Delete")).clicked() {
                     delete = Some(i);
                     ui.close();
                 }
@@ -261,7 +271,7 @@ impl MailApp {
             && i < self.settings.saved_searches.len()
         {
             let gone = self.settings.saved_searches.remove(i);
-            self.keep_settings(format!("The search folder \"{}\" was deleted.", gone.name));
+            self.keep_settings(trf!("The search folder \"{name}\" was deleted.", name = gone.name));
         }
         self.search_dialogs(ui.ctx());
     }
@@ -270,7 +280,7 @@ impl MailApp {
         let Some(s) = self.settings.saved_searches.get(i).cloned() else { return };
         let targets = search::resolve_saved(&s, &self.searchable());
         if targets.is_empty() {
-            self.say("The accounts this search folder covered are gone.");
+            self.say(tr("The accounts this search folder covered are gone."));
             return;
         }
         self.search = s.query.clone();
@@ -290,10 +300,10 @@ impl MailApp {
             let mut answer: Option<bool> = None;
             let m = egui::Modal::new(Id::unique("mailalm-save-search")).show(ctx, |ui| {
                 ui.set_width(420.0);
-                ui.heading("Keep as a search folder");
-                ui.label(RichText::new("It appears under the accounts and searches again, the same way, when opened.").color(t::muted()));
+                ui.heading(tr("Keep as a search folder"));
+                ui.label(RichText::new(tr("It appears under the accounts and searches again, the same way, when opened.")).color(t::muted()));
                 ui.add_space(6.0);
-                let field = ui.add(TextEdit::singleline(&mut name).hint_text("Name").desired_width(f32::INFINITY));
+                let field = ui.add(TextEdit::singleline(&mut name).hint_text(tr("Name")).desired_width(f32::INFINITY));
                 if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                     answer = Some(true);
                 }
@@ -301,10 +311,10 @@ impl MailApp {
                     ui.label(RichText::new(e).color(t::danger()));
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Keep").clicked() {
+                    if ui.button(tr("Keep")).clicked() {
                         answer = Some(true);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         answer = Some(false);
                     }
                 });
@@ -319,7 +329,7 @@ impl MailApp {
                     let all = self.searchable();
                     let made = self.search_state.as_ref().and_then(|s| search::to_saved(&name, &s.query, &s.targets, &all, s.server_asked));
                     let result = match made {
-                        None => Err("A search folder needs a name.".to_owned()),
+                        None => Err(tr("A search folder needs a name.").to_owned()),
                         Some(saved) => search::add_saved(&mut self.settings.saved_searches, saved),
                     };
                     match result {
@@ -329,7 +339,7 @@ impl MailApp {
                                 s.name = Some(name.clone());
                             }
                             self.search_ui.error = None;
-                            self.keep_settings(format!("The search folder \"{name}\" was made."));
+                            self.keep_settings(trf!("The search folder \"{name}\" was made.", name = name));
                         }
                         Err(e) => {
                             self.search_ui.error = Some(e);
@@ -343,7 +353,7 @@ impl MailApp {
             let mut answer: Option<bool> = None;
             let m = egui::Modal::new(Id::unique("mailalm-rename-search")).show(ctx, |ui| {
                 ui.set_width(420.0);
-                ui.heading("Rename the search folder");
+                ui.heading(tr("Rename the search folder"));
                 ui.add_space(6.0);
                 let field = ui.add(TextEdit::singleline(&mut name).desired_width(f32::INFINITY));
                 if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -353,10 +363,10 @@ impl MailApp {
                     ui.label(RichText::new(e).color(t::danger()));
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Rename").clicked() {
+                    if ui.button(tr("Rename")).clicked() {
                         answer = Some(true);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         answer = Some(false);
                     }
                 });
@@ -379,7 +389,7 @@ impl MailApp {
                                 s.name = Some(new.clone());
                             }
                             self.search_ui.error = None;
-                            self.keep_settings(format!("The search folder is now \"{new}\"."));
+                            self.keep_settings(trf!("The search folder is now \"{name}\".", name = new));
                         }
                         Err(e) => {
                             self.search_ui.error = Some(e);

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use mailalm_model::{Account, AccountId};
 use serde::{Deserialize, Serialize};
 
-use crate::i18n::Language;
+use crate::i18n::{Language, tr, trf};
 use crate::signatures::Writing;
 use crate::theme::ThemeChoice;
 
@@ -74,7 +74,7 @@ impl Settings {
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Self::default(), None),
-            Err(e) => return (Self::default(), Some(format!("The settings could not be read: {e}"))),
+            Err(e) => return (Self::default(), Some(trf!("The settings could not be read: {error}", error = e))),
         };
         match serde_json::from_slice::<Settings>(&bytes) {
             Ok(mut s) => {
@@ -86,16 +86,16 @@ impl Settings {
                 let mut aside = path.clone().into_os_string();
                 aside.push(".damaged");
                 let _ = std::fs::rename(&path, PathBuf::from(aside));
-                (Self { next_id: 1, ..Self::default() }, Some(format!("The settings file was damaged and was set aside: {e}")))
+                (Self { next_id: 1, ..Self::default() }, Some(trf!("The settings file was damaged and was set aside: {error}", error = e)))
             }
         }
     }
 
     pub fn save(&self) -> Result<(), String> {
-        let dir = Self::dir().ok_or("The settings folder is unknown.")?;
-        std::fs::create_dir_all(&dir).map_err(|e| format!("The settings could not be saved: {e}"))?;
-        let bytes = serde_json::to_vec_pretty(self).map_err(|e| format!("The settings could not be saved: {e}"))?;
-        mailalm_store::write_atomic(&dir.join("settings.json"), &bytes).map_err(|e| format!("The settings could not be saved: {e}"))
+        let dir = Self::dir().ok_or(tr("The settings folder is unknown."))?;
+        std::fs::create_dir_all(&dir).map_err(|e| trf!("The settings could not be saved: {error}", error = e))?;
+        let bytes = serde_json::to_vec_pretty(self).map_err(|e| trf!("The settings could not be saved: {error}", error = e))?;
+        mailalm_store::write_atomic(&dir.join("settings.json"), &bytes).map_err(|e| trf!("The settings could not be saved: {error}", error = e))
     }
 
     /// A new account id.

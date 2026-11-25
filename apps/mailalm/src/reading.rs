@@ -16,6 +16,7 @@ use mailalm_compose::{Editor, InlineImage, RemoteImage, RichEditor, import_messa
 use mailalm_mime::HtmlBody;
 
 use crate::compose::editor_images;
+use crate::i18n::{tr, trf};
 use crate::links::{self, LinkCheck, Opens};
 use crate::mailbox::MessageKey;
 use crate::pictures::{self, Fetched};
@@ -125,31 +126,37 @@ impl MessageView {
             ui.horizontal_wrapped(|ui| {
                 let mut notes: Vec<String> = Vec::new();
                 if plan.trackers > 0 {
-                    notes.push(format!("{} tracking picture{} never load{}", plan.trackers, plural(plan.trackers), if plan.trackers == 1 { "s" } else { "" }));
+                    notes.push(if plan.trackers == 1 { tr("1 tracking picture never loads").to_owned() } else { trf!("{count} tracking pictures never load", count = plan.trackers) });
                 }
                 if plan.insecure > 0 {
-                    notes.push(format!("{} not over https, not loaded", plan.insecure));
+                    notes.push(if plan.insecure == 1 { tr("1 not over https, not loaded").to_owned() } else { trf!("{count} not over https, not loaded", count = plan.insecure) });
                 }
                 if plan.over > 0 {
-                    notes.push(format!("{} beyond the first {}, not loaded", plan.over, pictures::MAX_PICTURES));
+                    notes.push(if plan.over == 1 {
+                        trf!("1 beyond the first {max}, not loaded", max = pictures::MAX_PICTURES)
+                    } else {
+                        trf!("{count} beyond the first {max}, not loaded", count = plan.over, max = pictures::MAX_PICTURES)
+                    });
                 }
                 if self.loading.is_some() {
                     ui.spinner();
-                    ui.label(RichText::new(format!("Loading the pictures… {} of {}", self.loaded.len() + self.failed, plan.fetch.len() + self.loaded.len())).size(12.5));
+                    ui.label(RichText::new(trf!("Loading the pictures… {done} of {total}", done = self.loaded.len() + self.failed, total = plan.fetch.len() + self.loaded.len())).size(12.5));
                 } else if self.asked {
-                    let mut text = format!("{} picture{} from the internet shown", self.loaded.len(), plural(self.loaded.len()));
-                    if self.failed > 0 {
-                        text.push_str(&format!(", {} could not be", self.failed));
+                    let mut text = if self.loaded.len() == 1 { tr("1 picture from the internet shown").to_owned() } else { trf!("{count} pictures from the internet shown", count = self.loaded.len()) };
+                    if self.failed == 1 {
+                        text.push_str(tr(", 1 could not be"));
+                    } else if self.failed > 1 {
+                        text.push_str(&trf!(", {count} could not be", count = self.failed));
                     }
                     ui.label(RichText::new(text).size(12.5).color(t::muted()));
                 } else if plan.fetch.is_empty() {
-                    ui.label(RichText::new("Pictures from the internet are blocked.").size(12.5).color(t::muted()));
+                    ui.label(RichText::new(tr("Pictures from the internet are blocked.")).size(12.5).color(t::muted()));
                 } else {
-                    ui.label(RichText::new(format!("Pictures from the internet are blocked ({}).", plan.fetch.len())).size(12.5).strong());
-                    if ui.small_button("Load for this message").on_hover_text("Fetches them now: their servers see that the message was opened, and from where.").clicked() {
+                    ui.label(RichText::new(trf!("Pictures from the internet are blocked ({count}).", count = plan.fetch.len())).size(12.5).strong());
+                    if ui.small_button(tr("Load for this message")).on_hover_text(tr("Fetches them now: their servers see that the message was opened, and from where.")).clicked() {
                         self.load_pictures(ui.ctx());
                     }
-                    if !sender.is_empty() && ui.small_button("Always for this sender").on_hover_text(format!("Loads the pictures of {sender}'s messages without asking (Settings, Writing and reading)")).clicked() {
+                    if !sender.is_empty() && ui.small_button(tr("Always for this sender")).on_hover_text(trf!("Loads the pictures of {sender}'s messages without asking (Settings, Writing and reading)", sender = sender)).clicked() {
                         self.load_pictures(ui.ctx());
                         action = Some(ViewAction::ApproveSender);
                     }
@@ -173,7 +180,7 @@ impl MessageView {
             let check = links::check(hit.link.as_str(), &hit.text);
             response.on_hover_ui_at_pointer(|ui| {
                 ui.set_max_width(420.0);
-                ui.label(RichText::new(format!("Goes to {}", check.domain)).strong());
+                ui.label(RichText::new(trf!("Goes to {domain}", domain = check.domain)).strong());
                 for w in &check.warnings {
                     ui.label(RichText::new(w).size(12.0).color(t::warn()));
                 }
@@ -193,14 +200,14 @@ impl MessageView {
         let mail = matches!(check.opens, Some(Opens::Mail { .. }));
         let m = egui::Modal::new(Id::unique("mailalm-confirm-link")).show(ctx, |ui| {
             ui.set_width(480.0);
-            ui.heading(if mail { "Write to this address?" } else { "Open this link?" });
+            ui.heading(if mail { tr("Write to this address?") } else { tr("Open this link?") });
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(if mail { "Domain:" } else { "Site:" }).color(t::muted()));
+                ui.label(RichText::new(if mail { tr("Domain:") } else { tr("Site:") }).color(t::muted()));
                 ui.label(RichText::new(&check.domain).strong().size(15.0));
             });
             if let Some(u) = &check.unicode {
-                ui.label(RichText::new(format!("written in the message as {u}")).size(12.0).color(t::faint()));
+                ui.label(RichText::new(trf!("written in the message as {unicode}", unicode = u)).size(12.0).color(t::faint()));
             }
             ui.add(egui::Label::new(RichText::new(clip(url, 600)).size(11.5).color(t::faint())).selectable(true).wrap());
             if !check.warnings.is_empty() {
@@ -215,20 +222,20 @@ impl MessageView {
             ui.horizontal(|ui| {
                 match &check.opens {
                     Some(Opens::Web(_)) => {
-                        if ui.button("Open in the browser").clicked() {
+                        if ui.button(tr("Open in the browser")).clicked() {
                             answer = Some(true);
                         }
                     }
                     Some(Opens::Mail { .. }) => {
-                        if ui.button("Write a message").clicked() {
+                        if ui.button(tr("Write a message")).clicked() {
                             answer = Some(true);
                         }
                     }
                     None => {
-                        ui.label(RichText::new("This link cannot be opened.").color(t::danger()));
+                        ui.label(RichText::new(tr("This link cannot be opened.")).color(t::danger()));
                     }
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     answer = Some(false);
                 }
             });
@@ -246,10 +253,6 @@ impl MessageView {
             Opens::Mail { to, subject, body } => Some(ViewAction::Write { to, subject, body }),
         }
     }
-}
-
-fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
 }
 
 /// At most `n` characters of `s`, without control characters.

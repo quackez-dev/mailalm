@@ -23,6 +23,7 @@ use egui::{
 
 use crate::editor::{Editor, ListKind};
 use crate::model::{Color, Document, Format, Kind, Link, Mark, Paragraph, Pos, Selection};
+use crate::tr;
 
 /// A link of a read-only document the pointer is on, or that was clicked: its target and the
 /// text that shows it.
@@ -93,16 +94,20 @@ struct Look {
     dark: bool,
 }
 
+/// A palette colour as the editor shows it: lighter on a dark background, as is on a light one.
+fn shown_color(c: Color, dark: bool) -> Color32 {
+    let [r, g, b] = c.rgb();
+    if dark {
+        let up = |v: u8| v + ((255 - v) as f32 * 0.4) as u8;
+        Color32::from_rgb(up(r), up(g), up(b))
+    } else {
+        Color32::from_rgb(r, g, b)
+    }
+}
+
 impl Look {
     fn palette(&self, c: Color) -> Color32 {
-        let [r, g, b] = c.rgb();
-        if self.dark {
-            // Lighter on a dark background.
-            let up = |v: u8| v + ((255 - v) as f32 * 0.4) as u8;
-            Color32::from_rgb(up(r), up(g), up(b))
-        } else {
-            Color32::from_rgb(r, g, b)
-        }
+        shown_color(c, self.dark)
     }
 
     fn size_of(&self, kind: &Kind) -> f32 {
@@ -696,7 +701,7 @@ fn paint(
                 }
                 None => {
                     painter.rect_filled(image_rect, 2.0, visuals.extreme_bg_color);
-                    painter.text(image_rect.center(), Align2::CENTER_CENTER, "Picture", FontId::new(look.size, look.family.clone()), look.weak);
+                    painter.text(image_rect.center(), Align2::CENTER_CENTER, tr("Picture"), FontId::new(look.size, look.family.clone()), look.weak);
                 }
             }
             if selected.is_some_and(|(a, b)| a < b) {
@@ -778,6 +783,27 @@ pub enum ToolbarRequest {
     InsertImage,
 }
 
+/// A heading level's name in the toolbar's menu.
+fn heading_label(level: u8) -> &'static str {
+    match level {
+        1 => tr("Heading 1"),
+        2 => tr("Heading 2"),
+        _ => tr("Heading 3"),
+    }
+}
+
+/// A palette colour's name in the toolbar's menu, in the interface's language.
+fn color_label(c: Color) -> &'static str {
+    match c {
+        Color::Red => tr("Red"),
+        Color::Orange => tr("Orange"),
+        Color::Green => tr("Green"),
+        Color::Blue => tr("Blue"),
+        Color::Purple => tr("Purple"),
+        Color::Gray => tr("Gray"),
+    }
+}
+
 /// The formatting toolbar: bold, italic, underline, strike, lists, quote, headings, link, colour,
 /// picture, clear formatting, undo and redo. Ctrl+K in the editor opens its link prompt.
 pub fn toolbar(ui: &mut Ui, editor: &mut Editor, state: &mut ToolbarState) -> Option<ToolbarRequest> {
@@ -792,10 +818,10 @@ pub fn toolbar(ui: &mut Ui, editor: &mut Editor, state: &mut ToolbarState) -> Op
     let quoted = editor.document().paragraph(editor.selection().head.para).is_some_and(|p| p.quote > 0);
     ui.horizontal_wrapped(|ui| {
         let marks = [
-            (Mark::Bold, RichText::new("B").strong(), "Bold (Ctrl+B)"),
-            (Mark::Italic, RichText::new("I").italics(), "Italic (Ctrl+I)"),
-            (Mark::Underline, RichText::new("U").underline(), "Underline (Ctrl+U)"),
-            (Mark::Strike, RichText::new("S").strikethrough(), "Strikethrough"),
+            (Mark::Bold, RichText::new("B").strong(), tr("Bold (Ctrl+B)")),
+            (Mark::Italic, RichText::new("I").italics(), tr("Italic (Ctrl+I)")),
+            (Mark::Underline, RichText::new("U").underline(), tr("Underline (Ctrl+U)")),
+            (Mark::Strike, RichText::new("S").strikethrough(), tr("Strikethrough")),
         ];
         for (mark, label, tip) in marks {
             if ui.add(Button::selectable(format.has(mark), label)).on_hover_text(tip).clicked() {
@@ -804,65 +830,66 @@ pub fn toolbar(ui: &mut Ui, editor: &mut Editor, state: &mut ToolbarState) -> Op
             }
         }
         ui.separator();
-        if ui.add(Button::selectable(kind == Kind::Bullet, "• List")).on_hover_text("Bulleted list (Ctrl+Shift+8)").clicked() {
+        if ui.add(Button::selectable(kind == Kind::Bullet, tr("• List"))).on_hover_text(tr("Bulleted list (Ctrl+Shift+8)")).clicked() {
             editor.toggle_list(ListKind::Bullets);
             acted = true;
         }
-        if ui.add(Button::selectable(kind == Kind::Numbered, "1. List")).on_hover_text("Numbered list (Ctrl+Shift+7)").clicked() {
+        if ui.add(Button::selectable(kind == Kind::Numbered, tr("1. List"))).on_hover_text(tr("Numbered list (Ctrl+Shift+7)")).clicked() {
             editor.toggle_list(ListKind::Numbers);
             acted = true;
         }
-        if ui.add(Button::selectable(quoted, "Quote")).clicked() {
+        if ui.add(Button::selectable(quoted, tr("Quote"))).clicked() {
             editor.toggle_quote();
             acted = true;
         }
-        let _ = ui.menu_button("Heading", |ui| {
+        let _ = ui.menu_button(tr("Heading"), |ui| {
             for level in 1..=3u8 {
-                if ui.add(Button::selectable(kind == Kind::Heading(level), format!("Heading {level}"))).clicked() {
+                if ui.add(Button::selectable(kind == Kind::Heading(level), heading_label(level))).clicked() {
                     editor.toggle_heading(level);
                     acted = true;
                     ui.close();
                 }
             }
-            if ui.button("Normal text").clicked() {
+            if ui.button(tr("Normal text")).clicked() {
                 editor.set_normal();
                 acted = true;
                 ui.close();
             }
         });
         ui.separator();
-        if ui.add(Button::selectable(format.link.is_some(), "Link…")).on_hover_text("Link (Ctrl+K)").clicked() {
+        if ui.add(Button::selectable(format.link.is_some(), tr("Link…"))).on_hover_text(tr("Link (Ctrl+K)")).clicked() {
             state.link = Some(editor.link_at_caret().map(|l| l.as_str().to_owned()).unwrap_or_default());
             state.error = None;
         }
-        let _ = ui.menu_button("Colour", |ui| {
-            if ui.button("Automatic").clicked() {
+        let _ = ui.menu_button(tr("Colour"), |ui| {
+            if ui.button(tr("Automatic")).clicked() {
                 editor.set_color(None);
                 acted = true;
                 ui.close();
             }
+            // Each colour as the text will show it in the theme shown (lighter on a dark one).
+            let dark = ui.visuals().dark_mode;
             for c in Color::ALL {
-                let [r, g, b] = c.rgb();
-                if ui.button(RichText::new(format!("■ {}", c.name())).color(Color32::from_rgb(r, g, b))).clicked() {
+                if ui.button(RichText::new(format!("■ {}", color_label(c))).color(shown_color(c, dark))).clicked() {
                     editor.set_color(Some(c));
                     acted = true;
                     ui.close();
                 }
             }
         });
-        if ui.button("Picture…").clicked() {
+        if ui.button(tr("Picture…")).clicked() {
             request = Some(ToolbarRequest::InsertImage);
         }
-        if ui.button("Clear formatting").clicked() {
+        if ui.button(tr("Clear formatting")).clicked() {
             editor.clear_formatting();
             acted = true;
         }
         ui.separator();
-        if ui.add_enabled(editor.can_undo(), Button::new("Undo")).on_hover_text("Undo (Ctrl+Z)").clicked() {
+        if ui.add_enabled(editor.can_undo(), Button::new(tr("Undo"))).on_hover_text(tr("Undo (Ctrl+Z)")).clicked() {
             editor.undo();
             acted = true;
         }
-        if ui.add_enabled(editor.can_redo(), Button::new("Redo")).on_hover_text("Redo (Ctrl+Y)").clicked() {
+        if ui.add_enabled(editor.can_redo(), Button::new(tr("Redo"))).on_hover_text(tr("Redo (Ctrl+Y)")).clicked() {
             editor.redo();
             acted = true;
         }
@@ -871,18 +898,18 @@ pub fn toolbar(ui: &mut Ui, editor: &mut Editor, state: &mut ToolbarState) -> Op
     let (mut apply, mut remove, mut close) = (false, false, false);
     if let Some(url) = state.link.as_mut() {
         ui.horizontal(|ui| {
-            ui.label("Link:");
+            ui.label(tr("Link:"));
             let field = ui.add(TextEdit::singleline(url).hint_text("https://…").desired_width(300.0));
             if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                 apply = true;
             }
-            if ui.button("Apply").clicked() {
+            if ui.button(tr("Apply")).clicked() {
                 apply = true;
             }
-            if editor.link_at_caret().is_some() && ui.button("Remove").clicked() {
+            if editor.link_at_caret().is_some() && ui.button(tr("Remove")).clicked() {
                 remove = true;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(tr("Cancel")).clicked() {
                 close = true;
             }
         });
@@ -902,7 +929,7 @@ pub fn toolbar(ui: &mut Ui, editor: &mut Editor, state: &mut ToolbarState) -> Op
                 close = true;
                 acted = true;
             }
-            None => state.error = Some("Only https, http and mailto links can be put in a message.".to_owned()),
+            None => state.error = Some(tr("Only https, http and mailto links can be put in a message.").to_owned()),
         }
     }
     if remove {

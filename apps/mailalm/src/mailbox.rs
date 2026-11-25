@@ -8,6 +8,8 @@ use mailalm_model::later::{FollowUp, Snoozed};
 use mailalm_model::rules::Rule;
 use mailalm_model::{AccountId, Folder, FolderRole, Summary};
 
+use crate::i18n::trf;
+
 /// One account, as the interface shows it.
 #[derive(Debug)]
 pub struct AccountState {
@@ -149,7 +151,7 @@ impl Mailboxes {
                 Outcome::None
             }
             Event::Error { text, .. } => Outcome::Error(text),
-            Event::Sent { subject, .. } => Outcome::Notice(format!("Sent: {subject}")),
+            Event::Sent { subject, .. } => Outcome::Notice(trf!("Sent: {subject}", subject = subject)),
             Event::SendFailed { text, message, .. } => Outcome::SendFailed { account, text, message },
             Event::SearchResults { id, hits, .. } => Outcome::SearchResults { account, id, hits },
             Event::SenderRules { rules, .. } => {
