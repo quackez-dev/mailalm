@@ -140,6 +140,7 @@ fn an_outgoing_message_round_trips_without_bcc_or_host_name() {
         in_reply_to: Some("abc123@studio.example".into()),
         references: vec!["root@studio.example".into(), "abc123@studio.example".into()],
         attachments: vec![],
+        html: None,
     };
     let (raw, id) = build(&out).expect("built");
     assert!(id.ends_with("@videotron.ca"));
@@ -284,4 +285,80 @@ fn replies_go_to_the_right_people() {
     assert_eq!(f.subject, "Fwd: Storyboard révision");
     assert!(f.text.contains("Forwarded message"));
     assert_eq!(reply(&parse(b"Subject: Re: hi\r\nFrom: a@b.example\r\n\r\nx").expect("msg"), &me, false, "").subject, "Re: hi");
+}
+
+/// A 1 x 1 PNG's first bytes (the content does not matter to the MIME writer).
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0\x1f\x15\xc4\x89";
+
+fn rich(attachments: Vec<OutgoingAttachment>, content_id: &str) -> Outgoing {
+    Outgoing {
+        from: Person { name: "Alex".into(), address: "alex@videotron.ca".into() },
+        to: vec![Person { name: String::new(), address: "zoe@studio.example".into() }],
+        subject: "Rich".into(),
+        text: "Hello you\n- one".into(),
+        html: Some(HtmlBody {
+            html: format!("<html><body><p>Hello <b>you</b></p><ul><li>one</li></ul><p><img src=\"cid:{content_id}\"></p></body></html>"),
+            images: vec![InlineImage { content_id: content_id.into(), content_type: "image/png".into(), bytes: PNG.to_vec() }],
+        }),
+        attachments,
+        ..Outgoing::default()
+    }
+}
+
+#[test]
+fn an_html_message_with_a_picture_round_trips() {
+    let out = rich(vec![OutgoingAttachment::new("notes.txt", b"n".to_vec())], "pic1.x@mailalm");
+    let (raw, _) = build(&out).expect("built");
+    assert!(raw.len() <= out.estimated_size(), "{} > {}", raw.len(), out.estimated_size());
+    let text = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+    for kind in ["multipart/mixed", "multipart/alternative", "multipart/related", "text/plain", "text/html", "image/png"] {
+        assert!(text.contains(kind), "{kind} in {text}");
+    }
+    assert!(text.contains("<pic1.x@mailalm>"), "the Content-ID header: {text}");
+    // The alternative comes before the attachment, the text before the HTML.
+    assert!(text.find("multipart/alternative").expect("alternative") < text.find("notes.txt").expect("file"));
+    assert!(text.find("text/plain").expect("plain") < text.find("text/html").expect("html"));
+
+    let back = parse(&raw).expect("parses back");
+    assert!(back.text.contains("Hello you"), "{:?}", back.text);
+    assert!(!back.from_html, "the reading pane shows the plain-text alternative");
+    assert!(back.attachments.iter().any(|a| a.name == "notes.txt"));
+    let html = html_body(&raw).expect("the HTML part");
+    assert!(html.contains("cid:pic1.x@mailalm") && html.contains("<b>you</b>"), "{html}");
+    let images = related_images(&raw);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].content_id, "pic1.x@mailalm");
+    assert_eq!(images[0].content_type, "image/png");
+    assert_eq!(images[0].bytes, PNG);
+    assert!(format!("{:?}", images[0]).len() < 200, "Debug leaves the content out");
+}
+
+#[test]
+fn an_html_message_without_attachments_is_an_alternative() {
+    let out = rich(Vec::new(), "pic2@mailalm");
+    let (raw, _) = build_for_api(&out).expect("built");
+    let text = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+    assert!(!text.contains("multipart/mixed"), "{text}");
+    let header_end = text.find("\r\n\r\n").expect("a header");
+    assert!(text[..header_end].contains("multipart/alternative"), "the message itself is the alternative: {text}");
+
+    // Without pictures, no multipart/related.
+    let mut plain_html = rich(Vec::new(), "pic3@mailalm");
+    if let Some(h) = plain_html.html.as_mut() {
+        h.images.clear();
+    }
+    let (raw, _) = build(&plain_html).expect("built");
+    assert!(!String::from_utf8_lossy(&raw).to_ascii_lowercase().contains("multipart/related"));
+    assert_eq!(html_body(PLAIN), None, "a plain message has no HTML");
+    assert!(related_images(PLAIN).is_empty());
+}
+
+#[test]
+fn a_picture_with_an_unsafe_content_id_or_type_is_refused() {
+    assert!(build(&rich(Vec::new(), "bad id\"><script>")).is_err());
+    let mut wrong_type = rich(Vec::new(), "ok@mailalm");
+    if let Some(h) = wrong_type.html.as_mut() {
+        h.images[0].content_type = "text/html".into();
+    }
+    assert!(build(&wrong_type).is_err());
 }

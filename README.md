@@ -38,6 +38,8 @@ apps/mailalm/     the desktop app (egui)
 crates/model/     accounts, servers, folders, summaries, search queries, workspace rules; calendars,
                   events, recurrences, tasks, contacts, iCalendar invitations (pure, tested)
 crates/mime/      reading messages and writing outgoing mail (mail-parser, mail-builder, html2text)
+crates/compose/   the rich-text editor: document model and edits (pure, tested), egui widget and toolbar,
+                  HTML sent with its plain-text alternative, import of untrusted HTML (html5ever's tokenizer)
 crates/net/       IMAP, TLS, SMTP, Microsoft and Google sign-in, Graph, Gmail, Google Calendar, Tasks
                   and People, partly adapted from MailCraft (see ATTRIBUTION.md)
 crates/store/     the local cache, one folder per account

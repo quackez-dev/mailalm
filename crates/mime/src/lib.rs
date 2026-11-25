@@ -6,7 +6,11 @@
 //! - [`attachment`] decodes one attachment, only when the user asks to review it.
 //! - [`summary_from_header`] reads the header block the sync fetches for the message list.
 //! - [`build`] writes an outgoing message, with its attachments, with a Message-ID that names the
-//!   sender's domain, never this computer's name.
+//!   sender's domain, never this computer's name. A message with an [`HtmlBody`] is written as
+//!   `multipart/alternative` (the text, then the HTML), the HTML in a `multipart/related` with the
+//!   pictures it shows (`cid:`).
+//! - [`html_body`] and [`related_images`] give a received message's HTML and the pictures it
+//!   names, for the editor to quote it in a reply or a forward.
 //!
 //! Everything read here comes from strangers: header text is cleaned of control and direction
 //! characters before it is shown ([`clean_line`]), and the HTML converted is capped in size.
@@ -17,6 +21,7 @@ use std::hash::{BuildHasher, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use mail_builder::mime::MimePart;
 use mail_parser::{AddressList, MessagePart, MessageParser, PartKind};
 use mailalm_model::{Flags, Person, Summary};
 
@@ -316,6 +321,50 @@ fn html_to_text(html: &str) -> String {
     text
 }
 
+/// The HTML version of a whole message, if it has one (not a text part standing in for it), for
+/// the editor to quote it: at most [`MAX_HTML`], cut on a character boundary.
+pub fn html_body(raw: &[u8]) -> Option<String> {
+    let m = MessageParser::default().parse(raw)?;
+    let part = m.html_body().next()?;
+    if !matches!(part.kind(), PartKind::Html) {
+        return None;
+    }
+    let html = part.text()?;
+    let mut end = html.len().min(MAX_HTML);
+    while !html.is_char_boundary(end) {
+        end -= 1;
+    }
+    html.get(..end).map(str::to_owned)
+}
+
+/// The most pictures [`related_images`] gives.
+const MAX_RELATED: usize = 64;
+/// The largest picture [`related_images`] gives.
+const MAX_RELATED_SIZE: usize = 8 << 20;
+
+/// The pictures of a whole message that have a Content-ID (those its HTML can show with `cid:`):
+/// at most 64, of at most 8 MB each, the first one for each content id. Their declared type is
+/// only a hint: the editor checks the content.
+pub fn related_images(raw: &[u8]) -> Vec<InlineImage> {
+    let mut out: Vec<InlineImage> = Vec::new();
+    let Some(m) = MessageParser::default().parse(raw) else { return out };
+    for part in m.html_body().chain(m.attachments()) {
+        if out.len() >= MAX_RELATED {
+            break;
+        }
+        let Some(content_id) = part.content_id().map(|c| c.trim().trim_start_matches('<').trim_end_matches('>').to_owned()) else { continue };
+        let content_type = part.content_type().map(|c| format!("{}/{}", c.ctype(), c.subtype().unwrap_or("")).to_ascii_lowercase()).unwrap_or_default();
+        if !content_type.starts_with("image/") || part.decoded_len() > MAX_RELATED_SIZE || out.iter().any(|i| i.content_id == content_id) {
+            continue;
+        }
+        let image = InlineImage { content_id, content_type, bytes: part.decoded().into_owned() };
+        if image.is_valid() && image.bytes.len() <= MAX_RELATED_SIZE {
+            out.push(image);
+        }
+    }
+    out
+}
+
 /// A message to send.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Outgoing {
@@ -330,6 +379,45 @@ pub struct Outgoing {
     pub references: Vec<String>,
     /// Files the user attached.
     pub attachments: Vec<OutgoingAttachment>,
+    /// The HTML version, if the message is written in rich text: `text` is then its plain-text
+    /// alternative.
+    pub html: Option<HtmlBody>,
+}
+
+/// The HTML version of a message being written, with the pictures it shows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HtmlBody {
+    /// A whole HTML document; pictures are named `cid:<content id>`.
+    pub html: String,
+    pub images: Vec<InlineImage>,
+}
+
+/// A picture an HTML body shows, sent as a part of its `multipart/related`.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct InlineImage {
+    /// Without angle brackets: letters, digits and `.-_@+=$%` only.
+    pub content_id: String,
+    /// `image/...`.
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl fmt::Debug for InlineImage {
+    /// Without the content.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InlineImage").field("content_id", &self.content_id).field("content_type", &self.content_type).field("bytes", &self.bytes.len()).finish()
+    }
+}
+
+impl InlineImage {
+    /// Whether it can be written as it is: a content id of safe characters, an image type.
+    pub fn is_valid(&self) -> bool {
+        let id_ok = !self.content_id.is_empty() && self.content_id.len() <= 200 && self.content_id.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-@+=$%".contains(&b));
+        let type_ok = self.content_type.len() <= 100
+            && self.content_type.to_ascii_lowercase().starts_with("image/")
+            && self.content_type.bytes().all(|b| b.is_ascii_alphanumeric() || b"/.+-".contains(&b));
+        id_ok && type_ok
+    }
 }
 
 /// A file attached to a message being written.
@@ -369,9 +457,14 @@ impl Outgoing {
         attachments_size(&self.attachments)
     }
 
-    /// About how large the written message is ([`estimated_size`]).
+    /// About how large the written message is ([`estimated_size`]), its HTML version and
+    /// pictures included.
     pub fn estimated_size(&self) -> usize {
-        estimated_size(&self.text, &self.attachments)
+        let html = self.html.as_ref().map_or(0, |h| {
+            let images = h.images.iter().fold(0usize, |n, i| n.saturating_add(i.bytes.len().div_ceil(57).saturating_mul(78)).saturating_add(400));
+            h.html.len().saturating_mul(2).saturating_add(images).saturating_add(400)
+        });
+        estimated_size(&self.text, &self.attachments).saturating_add(html)
     }
 }
 
@@ -487,11 +580,7 @@ fn write(out: &Outgoing, with_bcc: bool) -> Result<(Vec<u8>, String), String> {
         }
     }
     let id = message_id(&out.from.address);
-    let mut b = mail_builder::MessageBuilder::new()
-        .from(addr(&out.from))
-        .subject(out.subject.clone())
-        .message_id(id.clone())
-        .text_body(normalize_newlines(&out.text));
+    let mut b = mail_builder::MessageBuilder::new().from(addr(&out.from)).subject(out.subject.clone()).message_id(id.clone());
     if !out.to.is_empty() {
         b = b.to(out.to.iter().map(addr).collect::<Vec<_>>());
     }
@@ -507,19 +596,62 @@ fn write(out: &Outgoing, with_bcc: bool) -> Result<(Vec<u8>, String), String> {
     if !out.references.is_empty() {
         b = b.references(out.references.clone());
     }
-    for a in &out.attachments {
-        // The name again through `outgoing_name`: a message that came back from a failed send
-        // keeps what it had.
-        let name = outgoing_name(&a.name);
-        let content_type = if a.content_type.is_empty() || !a.content_type.bytes().all(|c| c.is_ascii_graphic()) {
-            content_type_for(&name).to_owned()
-        } else {
-            a.content_type.clone()
-        };
-        b = b.attachment(content_type, name, a.bytes.clone());
+    let text = normalize_newlines(&out.text);
+    match &out.html {
+        None => {
+            b = b.text_body(text);
+            for a in &out.attachments {
+                let (content_type, name) = attachment_type_and_name(a);
+                b = b.attachment(content_type, name, a.bytes.clone());
+            }
+        }
+        Some(html) => b = b.body(rich_body(text, html, &out.attachments)?),
     }
     let raw = b.write_to_vec().map_err(|e| format!("The message could not be written: {e}"))?;
     Ok((raw, id))
+}
+
+/// An attachment's type and name as they are written. The name goes again through
+/// `outgoing_name`: a message that came back from a failed send keeps what it had.
+fn attachment_type_and_name(a: &OutgoingAttachment) -> (String, String) {
+    let name = outgoing_name(&a.name);
+    let content_type = if a.content_type.is_empty() || !a.content_type.bytes().all(|c| c.is_ascii_graphic()) {
+        content_type_for(&name).to_owned()
+    } else {
+        a.content_type.clone()
+    };
+    (content_type, name)
+}
+
+/// The body of a message in rich text: `multipart/alternative` (the text, then the HTML, in a
+/// `multipart/related` with its pictures when it has some), inside a `multipart/mixed` with the
+/// attachments when there are any.
+fn rich_body(text: String, html: &HtmlBody, attachments: &[OutgoingAttachment]) -> Result<MimePart<'static>, String> {
+    let html_part = MimePart::new("text/html", normalize_newlines(&html.html));
+    let html_side = if html.images.is_empty() {
+        html_part
+    } else {
+        let mut parts = Vec::with_capacity(html.images.len() + 1);
+        parts.push(html_part);
+        for image in &html.images {
+            if !image.is_valid() {
+                return Err("A picture in the message could not be written.".to_owned());
+            }
+            parts.push(MimePart::new(image.content_type.to_ascii_lowercase(), image.bytes.clone()).inline().cid(image.content_id.clone()));
+        }
+        MimePart::new("multipart/related", parts)
+    };
+    let alternative = MimePart::new("multipart/alternative", vec![MimePart::new("text/plain", text), html_side]);
+    if attachments.is_empty() {
+        return Ok(alternative);
+    }
+    let mut parts = Vec::with_capacity(attachments.len() + 1);
+    parts.push(alternative);
+    for a in attachments {
+        let (content_type, name) = attachment_type_and_name(a);
+        parts.push(MimePart::new(content_type, a.bytes.clone()).attachment(name));
+    }
+    Ok(MimePart::new("multipart/mixed", parts))
 }
 
 fn addr(p: &Person) -> mail_builder::headers::address::Address<'static> {
