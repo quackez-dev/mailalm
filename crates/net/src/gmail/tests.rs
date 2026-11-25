@@ -367,7 +367,7 @@ fn busy_and_refused() {
     assert_eq!(busy(&resp(503, &Value::Null)), Some(Busy::TurnedAway));
     assert_eq!(busy(&resp(403, &rate)), Some(Busy::TurnedAway));
     assert_eq!(busy(&resp(502, &Value::Null)), Some(Busy::Failed));
-    assert_eq!(busy(&resp(403, &json!({"error": {"errors": [{"reason": "dailyLimitExceeded"}]}})), None);
+    assert_eq!(busy(&resp(403, &json!({"error": {"errors": [{"reason": "dailyLimitExceeded"}]}}))), None);
     assert_eq!(busy(&resp(400, &Value::Null)), None);
     assert_eq!((backoff_secs(Some("90"), 1), backoff_secs(Some("0"), 1), backoff_secs(None, 3), backoff_secs(Some("x"), 1)), (20, 1, 6, 2));
 }
