@@ -12,7 +12,6 @@
 //! synced at the history id Gmail still reports has nothing new, and is not listed again.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
@@ -20,12 +19,16 @@ use mailalm_mime::Outgoing;
 use mailalm_model::{Account, AccountId, Change, Folder, FolderRole, Summary};
 use mailalm_net::NetError;
 use mailalm_net::gmail::{FilterAction, GmailClient, LabelKind};
+use mailalm_net::google::GoogleClient;
 use mailalm_net::oauth::{self, Provider, Tokens};
 use mailalm_store::{FolderState, Store};
 
 use crate::ids::Ids;
 use crate::local::{self, sort_newest_first};
-use crate::{Command, Event, Link, SenderCommand, SenderRule, SenderRuleKind, Wake, secrets};
+use crate::pim_sync::{self, Memo};
+use crate::{Command, Event, Link, SenderCommand, SenderRule, SenderRuleKind, Start, Wake, Zones, secrets};
+
+mod pim;
 
 /// How often the Inbox and the open folder are checked for new mail.
 const CHECK_EVERY: Duration = Duration::from_secs(3 * 60);
@@ -61,7 +64,8 @@ const SYSTEM: [(&str, &str, FolderRole); 11] = [
     ("CATEGORY_FORUMS", "Forums", FolderRole::Other),
 ];
 
-pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events: Sender<Event>, wake: Wake) {
+pub fn run(account: Account, start: Start) {
+    let Start { base, commands, events, wake, zones } = start;
     let store = match Store::open(&base, account.id) {
         Ok(s) => s,
         Err(e) => {
@@ -72,10 +76,13 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
     };
     let mut w = Gmail {
         id: account.id,
+        address: account.address.clone(),
         store,
         events,
         wake,
+        zones,
         client: None,
+        google: None,
         tokens: None,
         folders: Vec::new(),
         viewed: None,
@@ -84,11 +91,15 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
         flushing: false,
         queued: Vec::new(),
         details: HashMap::new(),
+        pim: Memo::default(),
     };
     w.show_cache();
+    pim_sync::show_cache(&w);
     w.sync_all(&commands);
+    pim_sync::sync(&mut w);
     let mut last_check = Instant::now();
     let mut last_full = Instant::now();
+    let mut last_pim = Instant::now();
     while !w.stop {
         let cmd = match w.queued.pop() {
             Some(c) => Ok(c),
@@ -97,6 +108,10 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
         match cmd {
             Ok(c) => w.handle(c, &commands),
             Err(RecvTimeoutError::Timeout) => {
+                if last_pim.elapsed() >= pim_sync::SYNC_EVERY {
+                    last_pim = Instant::now();
+                    pim_sync::sync(&mut w);
+                }
                 if last_full.elapsed() >= SYNC_ALL_EVERY {
                     last_full = Instant::now();
                     last_check = Instant::now();
@@ -108,15 +123,24 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
             }
             Err(RecvTimeoutError::Disconnected) => break,
         }
+        // Calendar and task changes made while a sync was running.
+        if w.pim.dirty && !w.stop {
+            pim_sync::flush(&mut w);
+        }
     }
 }
 
 struct Gmail {
     id: AccountId,
+    /// The account's address: the user, as a meeting's guest or organizer.
+    address: String,
     store: Store,
     events: Sender<Event>,
     wake: Wake,
+    zones: Zones,
     client: Option<GmailClient>,
+    /// Google Calendar, Tasks and People, on the same sign-in as the mail.
+    google: Option<GoogleClient>,
     tokens: Option<Tokens>,
     folders: Vec<Folder>,
     viewed: Option<String>,
@@ -128,6 +152,8 @@ struct Gmail {
     /// The details of the messages read lately, by Gmail id: a message in several folders (the
     /// Inbox, its category, All Mail) is read once.
     details: HashMap<String, Summary>,
+    /// The calendars' and tasks' sync (`pim_sync`).
+    pim: Memo,
 }
 
 /// An error as the user reads it. Never holds a token: the network layer never puts one in.
@@ -183,7 +209,11 @@ impl Gmail {
 
     fn handle(&mut self, c: Command, commands: &Receiver<Command>) {
         match c {
-            Command::SyncAll => self.sync_all(commands),
+            Command::SyncAll => {
+                self.sync_all(commands);
+                pim_sync::sync(self);
+            }
+            Command::Pim(p) => pim_sync::handle(self, p),
             Command::View(folder) => {
                 self.viewed = Some(folder.clone());
                 if let Some(f) = self.folder(&folder) {
@@ -205,6 +235,7 @@ impl Gmail {
                 self.client = None;
                 self.tokens = None;
                 self.sync_all(commands);
+                pim_sync::sync(self);
             }
             Command::Senders(c) => self.senders(c),
             Command::Stop => self.stop = true,
@@ -217,6 +248,12 @@ impl Gmail {
         while let Ok(c) = commands.try_recv() {
             served = true;
             match c {
+                // A calendar or task change goes into the cache now, to the server after.
+                Command::Pim(p) => {
+                    if let Some(later) = pim_sync::take_local(self, p) {
+                        self.queued.insert(0, Command::Pim(later));
+                    }
+                }
                 Command::Open { folder, uid } => self.open(&folder, uid),
                 Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
                 Command::Search { id, query } => {
@@ -267,6 +304,10 @@ impl Gmail {
                         c.set_token(&t.access);
                     } else {
                         self.client = Some(GmailClient::new(&t.access));
+                    }
+                    match self.google.as_mut() {
+                        Some(g) => g.set_token(&t.access),
+                        None => self.google = Some(GoogleClient::new(&t.access)),
                     }
                     self.tokens = Some(t);
                     if first {

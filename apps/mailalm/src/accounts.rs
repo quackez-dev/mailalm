@@ -460,9 +460,10 @@ fn security_combo(ui: &mut Ui, id: &str, value: &mut Security) -> bool {
     before != *value
 }
 
-/// Shows a web page in the default browser (Windows' URL handler). Only the sign-in pages MailALM
-/// builds itself come here: `https://` addresses alone.
-fn open_in_browser(url: &str) -> Result<(), String> {
+/// Shows a web page in the default browser (Windows' URL handler): the sign-in pages MailALM
+/// builds itself, and an event's link the user clicked (checked by the model first). `https://`
+/// addresses alone.
+pub(crate) fn open_in_browser(url: &str) -> Result<(), String> {
     if !url.starts_with("https://") {
         return Err("not a secure web address".to_owned());
     }

@@ -140,6 +140,7 @@ fn an_outgoing_message_round_trips_without_bcc_or_host_name() {
         in_reply_to: Some("abc123@studio.example".into()),
         references: vec!["root@studio.example".into(), "abc123@studio.example".into()],
         attachments: vec![],
+        calendar: None,
     };
     let (raw, id) = build(&out).expect("built");
     assert!(id.ends_with("@videotron.ca"));
@@ -201,6 +202,42 @@ fn attachments_are_sent_and_read_back() {
     // The same through an API (Bcc written), still with the attachments.
     let (raw, _) = build_for_api(&out).expect("built");
     assert_eq!(parse(&raw).expect("parses back").attachments.len(), 2);
+}
+
+#[test]
+fn a_meeting_message_carries_its_calendar_part() {
+    let ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:u1@videotron.ca\r\nDTSTART:20261125T140000Z\r\nDTEND:20261125T150000Z\r\nSUMMARY:Mix\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    let mut out = Outgoing {
+        from: Person { name: "Alex".into(), address: "alex@videotron.ca".into() },
+        to: vec![Person { name: String::new(), address: "zoe@studio.example".into() }],
+        subject: "Invitation: Mix".into(),
+        text: "You are invited.".into(),
+        calendar: Some(CalendarPart { method: "request".into(), text: ics.into() }),
+        ..Outgoing::default()
+    };
+    let (raw, _) = build(&out).expect("built");
+    let text = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+    assert!(text.contains("multipart/alternative"), "{text}");
+    assert!(text.contains("text/calendar") && text.contains("method=request"), "{text}");
+    let back = parse(&raw).expect("parses back");
+    assert!(back.text.contains("You are invited."));
+    assert_eq!(back.attachments.len(), 1, "the calendar is listed as a part");
+    assert_eq!(back.attachments[0].declared_type, "text/calendar");
+    let part = attachment(&raw, 0).expect("decoded");
+    assert!(String::from_utf8_lossy(&part.bytes).contains("UID:u1@videotron.ca"));
+
+    // With a file too: mixed, the calendar first.
+    out.attachments = vec![OutgoingAttachment::new("agenda.txt", b"1. Mix".to_vec())];
+    let (raw, _) = build(&out).expect("built");
+    let back = parse(&raw).expect("parses back");
+    assert_eq!(back.attachments.len(), 2);
+    assert_eq!(back.attachments[1].name, "agenda.txt");
+
+    // A method that isn't one, or a text that isn't a calendar, is refused.
+    out.calendar = Some(CalendarPart { method: "REQUEST; x=y".into(), text: ics.into() });
+    assert!(build(&out).is_err());
+    out.calendar = Some(CalendarPart { method: "REQUEST".into(), text: "hello".into() });
+    assert!(build(&out).is_err());
 }
 
 #[test]

@@ -1,6 +1,8 @@
 //! What every kind of account does the same way with its cache: changes shown before the server
 //! has them, and the search.
 
+use mailalm_model::pim::ZoneRules;
+use mailalm_model::pim::ical::{self, Invitation};
 use mailalm_model::{AccountId, Change, Folder, Query, Summary};
 use mailalm_store::Store;
 
@@ -71,6 +73,40 @@ pub(crate) fn review(store: &Store, account: AccountId, folder: &str, uid: u32, 
         }),
     };
     Event::Attachment { account, folder: folder.to_owned(), uid, index, result }
+}
+
+/// The largest calendar part read as an invitation.
+const MAX_INVITATION: usize = 1 << 20;
+
+/// Whether a part of a message, as listed, is a calendar (an invitation, an answer, a
+/// cancellation): `text/calendar`, `application/ics`, or a name ending in `.ics`.
+pub fn is_calendar_part(declared_type: &str, name: &str) -> bool {
+    matches!(declared_type.trim().to_ascii_lowercase().as_str(), "text/calendar" | "application/ics") || name.trim().to_ascii_lowercase().ends_with(".ics")
+}
+
+/// The calendar part of a message the reading pane shows, decoded (that part only, at most
+/// [`MAX_INVITATION`] bytes) and read as an invitation with MailALM's own iCalendar reader, which
+/// caps and cleans everything it keeps. Nothing else of the message is decoded.
+pub(crate) fn invitation(store: &Store, account: AccountId, folder: &str, uid: u32, index: usize, zones: &dyn ZoneRules) -> Event {
+    let read = || -> Result<Box<Invitation>, String> {
+        let raw = store.message(folder, uid).ok_or("This message is no longer in the cache: open it again.")?;
+        let parsed = mailalm_mime::parse(&raw).ok_or("This message could not be read.")?;
+        let info = parsed.attachments.get(index).ok_or("This part is no longer in the message.")?;
+        if !is_calendar_part(&info.declared_type, &info.name) {
+            return Err("This part of the message is not a calendar.".to_owned());
+        }
+        if info.size > MAX_INVITATION {
+            return Err(format!("The calendar in this message is larger than {} KB: MailALM does not read it.", MAX_INVITATION >> 10));
+        }
+        let data = mailalm_mime::attachment(&raw, index)?;
+        let bytes = data.bytes.get(..MAX_INVITATION.min(data.bytes.len())).unwrap_or_default();
+        let invitation = ical::parse(&String::from_utf8_lossy(bytes), zones);
+        if invitation.events.is_empty() {
+            return Err("The calendar in this message has no event MailALM can read.".to_owned());
+        }
+        Ok(Box::new(invitation))
+    };
+    Event::Invitation { account, folder: folder.to_owned(), uid, index, result: read() }
 }
 
 pub(crate) fn sort_newest_first(s: &mut [Summary]) {

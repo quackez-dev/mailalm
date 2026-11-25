@@ -1,7 +1,6 @@
 //! One account's worker: its cache, its IMAP connection, its queue of changes.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
@@ -11,7 +10,9 @@ use mailalm_net::{ImapSession, Mailbox, NetError};
 use mailalm_store::{FolderState, Store};
 
 use crate::local::{self, sort_newest_first};
-use crate::{Command, Event, Link, Wake, secrets};
+use crate::{Command, Event, Link, Start, Wake, Zones, secrets};
+
+mod pim;
 
 /// How often the Inbox and the open folder are checked for new mail.
 const CHECK_EVERY: Duration = Duration::from_secs(3 * 60);
@@ -27,7 +28,8 @@ const PREFETCH_INBOX: usize = 100;
 const PREFETCH_OTHER: usize = 20;
 const PREFETCH_MAX_SIZE: u32 = 2 * 1024 * 1024;
 
-pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events: Sender<Event>, wake: Wake) {
+pub fn run(account: Account, start: Start) {
+    let Start { base, commands, events, wake, zones } = start;
     let store = match Store::open(&base, account.id) {
         Ok(s) => s,
         Err(e) => {
@@ -42,6 +44,7 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
         store,
         events,
         wake,
+        zones,
         session: None,
         selected: None,
         folders: Vec::new(),
@@ -52,6 +55,7 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
         queued: Vec::new(),
     };
     w.show_cache();
+    w.pim_show_cache();
     w.sync_all(&commands);
     let mut last_check = Instant::now();
     let mut last_full = Instant::now();
@@ -92,6 +96,8 @@ struct Worker {
     store: Store,
     events: Sender<Event>,
     wake: Wake,
+    /// The zone rules meeting messages are written with.
+    zones: Zones,
     session: Option<ImapSession>,
     /// The folder selected on the connection.
     selected: Option<String>,
@@ -167,6 +173,7 @@ impl Worker {
                 self.sync_all(commands);
             }
             Command::Senders(_) => self.error("Blocking a sender on an IMAP account arrives with the rules (phase 8)."),
+            Command::Pim(p) => self.pim(p),
             Command::Stop => self.stop = true,
         }
     }
@@ -185,6 +192,8 @@ impl Worker {
                 Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
                 Command::Search { id, query } => self.search(id, &query),
                 Command::Apply(change) => self.apply_local(change),
+                // The calendar and tasks are this computer's: done now.
+                Command::Pim(p) => self.pim(p),
                 Command::Stop => {
                     self.stop = true;
                     return served;

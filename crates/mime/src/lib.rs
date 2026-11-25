@@ -330,7 +330,24 @@ pub struct Outgoing {
     pub references: Vec<String>,
     /// Files the user attached.
     pub attachments: Vec<OutgoingAttachment>,
+    /// A meeting message's calendar (an invitation, an answer, a cancellation), sent beside the
+    /// text as a `text/calendar` part (iMIP, RFC 6047).
+    pub calendar: Option<CalendarPart>,
 }
+
+/// The calendar of a meeting message sent by mail (iMIP, RFC 6047): its iTIP method and its text,
+/// as `mailalm_model::pim::ical` writes them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CalendarPart {
+    /// `REQUEST`, `REPLY`, `CANCEL`, `COUNTER`…: the part's `method` parameter, which must say what
+    /// the calendar's `METHOD` says.
+    pub method: String,
+    /// The calendar text (`BEGIN:VCALENDAR`…).
+    pub text: String,
+}
+
+/// The longest calendar part written.
+const MAX_CALENDAR_PART: usize = 4 << 20;
 
 /// A file attached to a message being written.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -487,11 +504,7 @@ fn write(out: &Outgoing, with_bcc: bool) -> Result<(Vec<u8>, String), String> {
         }
     }
     let id = message_id(&out.from.address);
-    let mut b = mail_builder::MessageBuilder::new()
-        .from(addr(&out.from))
-        .subject(out.subject.clone())
-        .message_id(id.clone())
-        .text_body(normalize_newlines(&out.text));
+    let mut b = mail_builder::MessageBuilder::new().from(addr(&out.from)).subject(out.subject.clone()).message_id(id.clone());
     if !out.to.is_empty() {
         b = b.to(out.to.iter().map(addr).collect::<Vec<_>>());
     }
@@ -507,19 +520,53 @@ fn write(out: &Outgoing, with_bcc: bool) -> Result<(Vec<u8>, String), String> {
     if !out.references.is_empty() {
         b = b.references(out.references.clone());
     }
-    for a in &out.attachments {
-        // The name again through `outgoing_name`: a message that came back from a failed send
-        // keeps what it had.
-        let name = outgoing_name(&a.name);
-        let content_type = if a.content_type.is_empty() || !a.content_type.bytes().all(|c| c.is_ascii_graphic()) {
-            content_type_for(&name).to_owned()
-        } else {
-            a.content_type.clone()
-        };
-        b = b.attachment(content_type, name, a.bytes.clone());
+    let text = normalize_newlines(&out.text);
+    match &out.calendar {
+        None => {
+            b = b.text_body(text);
+            for a in &out.attachments {
+                let (content_type, name) = attachment_type(a);
+                b = b.attachment(content_type, name, a.bytes.clone());
+            }
+        }
+        Some(cal) => b = b.body(calendar_body(text, cal, &out.attachments)?),
     }
     let raw = b.write_to_vec().map_err(|e| format!("The message could not be written: {e}"))?;
     Ok((raw, id))
+}
+
+/// An attachment's type and name as written. The name again through `outgoing_name`: a message
+/// that came back from a failed send keeps what it had.
+fn attachment_type(a: &OutgoingAttachment) -> (String, String) {
+    let name = outgoing_name(&a.name);
+    let content_type =
+        if a.content_type.is_empty() || !a.content_type.bytes().all(|c| c.is_ascii_graphic()) { content_type_for(&name).to_owned() } else { a.content_type.clone() };
+    (content_type, name)
+}
+
+/// A meeting message's body (RFC 6047): the text and the calendar as alternatives, in a
+/// `multipart/mixed` with the attachments when there are any.
+fn calendar_body(text: String, cal: &CalendarPart, attachments: &[OutgoingAttachment]) -> Result<mail_builder::mime::MimePart<'static>, String> {
+    use mail_builder::headers::content_type::ContentType;
+    use mail_builder::mime::MimePart;
+    let method = cal.method.trim().to_ascii_uppercase();
+    if method.is_empty() || method.len() > 20 || !method.bytes().all(|c| c.is_ascii_uppercase()) {
+        return Err("The meeting message has no valid method.".to_owned());
+    }
+    if cal.text.len() > MAX_CALENDAR_PART || !cal.text.trim_start().starts_with("BEGIN:VCALENDAR") {
+        return Err("The meeting message's calendar could not be written.".to_owned());
+    }
+    let calendar_type = ContentType::new("text/calendar").attribute("method", method).attribute("charset", "utf-8");
+    let alternative = MimePart::new("multipart/alternative", vec![MimePart::new("text/plain", text), MimePart::new(calendar_type, cal.text.clone())]);
+    if attachments.is_empty() {
+        return Ok(alternative);
+    }
+    let mut parts = vec![alternative];
+    for a in attachments {
+        let (content_type, name) = attachment_type(a);
+        parts.push(MimePart::new(content_type, a.bytes.clone()).attachment(name));
+    }
+    Ok(MimePart::new("multipart/mixed", parts))
 }
 
 fn addr(p: &Person) -> mail_builder::headers::address::Address<'static> {

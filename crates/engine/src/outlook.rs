@@ -9,7 +9,6 @@
 //! only what changed since, from the delta link kept in the folder's state.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
@@ -22,7 +21,10 @@ use mailalm_store::{FolderState, Store};
 
 use crate::ids::Ids;
 use crate::local::{self, sort_newest_first};
-use crate::{Command, Event, Link, Wake, secrets};
+use crate::pim_sync::{self, Memo};
+use crate::{Command, Event, Link, Start, Wake, Zones, secrets};
+
+mod pim;
 
 /// How often the Inbox and the open folder are checked for new mail.
 const CHECK_EVERY: Duration = Duration::from_secs(3 * 60);
@@ -37,7 +39,8 @@ const SAVE_EVERY_PAGES: usize = 10;
 /// The most delta pages one sync of a folder reads (200 messages each).
 const MAX_PAGES: usize = 2_000;
 
-pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events: Sender<Event>, wake: Wake) {
+pub fn run(account: Account, start: Start) {
+    let Start { base, commands, events, wake, zones } = start;
     let store = match Store::open(&base, account.id) {
         Ok(s) => s,
         Err(e) => {
@@ -48,9 +51,11 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
     };
     let mut w = Outlook {
         id: account.id,
+        address: account.address.clone(),
         store,
         events,
         wake,
+        zones,
         client: None,
         tokens: None,
         folders: Vec::new(),
@@ -59,11 +64,15 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
         stop: false,
         flushing: false,
         queued: Vec::new(),
+        pim: Memo::default(),
     };
     w.show_cache();
+    pim_sync::show_cache(&w);
     w.sync_all(&commands);
+    pim_sync::sync(&mut w);
     let mut last_check = Instant::now();
     let mut last_full = Instant::now();
+    let mut last_pim = Instant::now();
     while !w.stop {
         let cmd = match w.queued.pop() {
             Some(c) => Ok(c),
@@ -72,6 +81,10 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
         match cmd {
             Ok(c) => w.handle(c, &commands),
             Err(RecvTimeoutError::Timeout) => {
+                if last_pim.elapsed() >= pim_sync::SYNC_EVERY {
+                    last_pim = Instant::now();
+                    pim_sync::sync(&mut w);
+                }
                 if last_full.elapsed() >= SYNC_ALL_EVERY {
                     last_full = Instant::now();
                     last_check = Instant::now();
@@ -83,14 +96,21 @@ pub fn run(account: Account, base: PathBuf, commands: Receiver<Command>, events:
             }
             Err(RecvTimeoutError::Disconnected) => break,
         }
+        // Calendar and task changes made while a sync was running.
+        if w.pim.dirty && !w.stop {
+            pim_sync::flush(&mut w);
+        }
     }
 }
 
 struct Outlook {
     id: AccountId,
+    /// The account's address: the user, as a meeting's guest or organizer.
+    address: String,
     store: Store,
     events: Sender<Event>,
     wake: Wake,
+    zones: Zones,
     client: Option<GraphClient>,
     tokens: Option<Tokens>,
     folders: Vec<Folder>,
@@ -100,6 +120,8 @@ struct Outlook {
     stop: bool,
     flushing: bool,
     queued: Vec<Command>,
+    /// The calendars' and tasks' sync (`pim_sync`).
+    pim: Memo,
 }
 
 /// An error as the user reads it. Never holds a token: the network layer never puts one in.
@@ -141,7 +163,11 @@ impl Outlook {
 
     fn handle(&mut self, c: Command, commands: &Receiver<Command>) {
         match c {
-            Command::SyncAll => self.sync_all(commands),
+            Command::SyncAll => {
+                self.sync_all(commands);
+                pim_sync::sync(self);
+            }
+            Command::Pim(p) => pim_sync::handle(self, p),
             Command::View(folder) => {
                 self.viewed = Some(folder.clone());
                 if let Some(f) = self.folder(&folder) {
@@ -162,6 +188,7 @@ impl Outlook {
                 self.client = None;
                 self.tokens = None;
                 self.sync_all(commands);
+                pim_sync::sync(self);
             }
             Command::Senders(_) => self.error("Microsoft's API cannot change Outlook.com's blocked senders: block a sender in Outlook.com's settings (Mail, Junk email)."),
             Command::Stop => self.stop = true,
@@ -174,6 +201,12 @@ impl Outlook {
         while let Ok(c) = commands.try_recv() {
             served = true;
             match c {
+                // A calendar or task change goes into the cache now, to the server after.
+                Command::Pim(p) => {
+                    if let Some(later) = pim_sync::take_local(self, p) {
+                        self.queued.insert(0, Command::Pim(later));
+                    }
+                }
                 Command::Open { folder, uid } => self.open(&folder, uid),
                 Command::Attachment { folder, uid, index } => self.emit(local::review(&self.store, self.id, &folder, uid, index)),
                 Command::Search { id, query } => {

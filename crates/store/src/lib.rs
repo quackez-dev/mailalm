@@ -12,6 +12,7 @@
 //!   f-<key>/ids.json          Outlook: each message's local number and its id on the server
 //!   f-<key>/<uid>.eml         a message, as the server sent it
 //!   f-<key>/<uid>.txt         its text, for the search
+//!   pim/                      calendars, events, tasks, contacts and their changes ([`pim`])
 //! ```
 //!
 //! `<key>` is a hash of the folder's path, so no name sent by a server ever becomes a file name.
@@ -26,6 +27,10 @@ use std::path::{Path, PathBuf};
 use mailalm_model::{AccountId, Change, Folder, Summary};
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
+
+pub mod pim;
+
+pub use pim::{PimChange, PimState};
 
 /// What the cache remembers of a folder between two syncs.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

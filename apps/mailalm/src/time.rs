@@ -76,6 +76,91 @@ pub fn long(utc: i64) -> String {
     format!("{} {y}-{m:02}-{d:02} {}", weekday(day), hm(utc))
 }
 
+/// The system's zone name (IANA), or "UTC" when it cannot be known.
+pub fn zone_name() -> String {
+    zone().map_or_else(|| "UTC".to_owned(), |z| z.name().to_owned())
+}
+
+/// The wall-clock time here at a UTC instant, as seconds since 1970 (as if it were UTC).
+pub fn local(utc: i64) -> i64 {
+    utc.saturating_add(offset(utc))
+}
+
+/// The UTC instant of a wall-clock time here (seconds since 1970, as if UTC).
+pub fn utc_of_local(local: i64) -> i64 {
+    mailalm_model::pim::utc_time(&crate::zones::TzRules, "", local)
+}
+
+/// The UTC instant of a local day's midnight.
+pub fn day_start(day: i64) -> i64 {
+    utc_of_local(day.saturating_mul(86_400))
+}
+
+/// 0 for Monday to 6 for Sunday.
+pub fn weekday_index(day: i64) -> i64 {
+    (day + 3).rem_euclid(7)
+}
+
+const LONG_MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const LONG_DAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const SHORT_DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+pub fn month_name(m: i64) -> &'static str {
+    usize::try_from(m - 1).ok().and_then(|i| LONG_MONTHS.get(i)).copied().unwrap_or("")
+}
+
+pub fn month_short(m: i64) -> &'static str {
+    month(m)
+}
+
+pub fn day_name(day: i64) -> &'static str {
+    usize::try_from(weekday_index(day)).ok().and_then(|i| LONG_DAYS.get(i)).copied().unwrap_or("")
+}
+
+pub fn day_short(day: i64) -> &'static str {
+    usize::try_from(weekday_index(day)).ok().and_then(|i| SHORT_DAYS.get(i)).copied().unwrap_or("")
+}
+
+/// A day as `2026-11-25`.
+pub fn date(day: i64) -> String {
+    let (y, m, d) = civil_from_days(day);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The time of day here, `14:05`.
+pub fn clock(utc: i64) -> String {
+    let s = local(utc).rem_euclid(86_400);
+    format!("{:02}:{:02}", s / 3600, s % 3600 / 60)
+}
+
+/// An event's time as the calendar shows it: "Wed 2026-11-25 14:00 – 15:00", over several days
+/// "Wed 2026-11-25 14:00 – Thu 2026-11-26 10:00"; an all-day event's dates ("Wed 2026-11-25, all
+/// day", "Wed 2026-11-25 – Fri 2026-11-27").
+pub fn span(start: i64, end: i64, all_day: bool) -> String {
+    if all_day {
+        let first = start.div_euclid(86_400);
+        let last = (end.div_euclid(86_400) - 1).max(first);
+        return if first == last {
+            format!("{} {}, all day", day_short(first), date(first))
+        } else {
+            format!("{} {} – {} {}", day_short(first), date(first), day_short(last), date(last))
+        };
+    }
+    let (a, b) = (local_day(start), local_day(end.saturating_sub(1).max(start)));
+    if a == b {
+        format!("{} {} {} – {}", day_short(a), date(a), clock(start), clock(end))
+    } else {
+        format!("{} {} {} – {} {} {}", day_short(a), date(a), clock(start), day_short(b), date(b), clock(end))
+    }
+}
+
+/// `HH:MM` (or `H:MM`) as seconds into the day.
+pub fn parse_clock(s: &str) -> Option<i64> {
+    let (h, m) = s.trim().split_once(':')?;
+    let (h, m): (i64, i64) = (h.trim().parse().ok()?, m.trim().parse().ok()?);
+    ((0..24).contains(&h) && (0..60).contains(&m)).then_some(h * 3600 + m * 60)
+}
+
 /// The groups of the message list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {

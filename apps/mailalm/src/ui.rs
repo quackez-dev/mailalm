@@ -15,6 +15,7 @@ use mailalm_model::{Account, AccountId, Change, Focus, FolderRole, NewMail, Pers
 use mailalm_safety::files::TempFolder;
 
 use crate::accounts::{AccountForm, FormResult, Secret};
+use crate::agenda::{Ctx, Pim, PimPage};
 use crate::attachments::{self, Review, ReviewAction};
 use crate::compose::{Compose, ComposeAction};
 use crate::icons::{self, Icon};
@@ -23,6 +24,8 @@ use crate::settings::Settings;
 use crate::theme as t;
 use crate::time::{self, Group};
 use crate::window;
+
+mod pim;
 
 /// Starting widths of the folder pane and the message list. The splitters between the three
 /// columns change them; the reading pane takes what is left.
@@ -48,6 +51,8 @@ enum View {
 enum Page {
     Mail,
     Settings,
+    /// Calendar, Contacts or Tasks (`agenda.rs` and its pages).
+    Pim(PimPage),
 }
 
 struct SearchState {
@@ -110,13 +115,16 @@ pub struct MailApp {
     reviewed: HashSet<(MessageKey, usize)>,
     /// The copies of attachments opened with Windows: emptied at start and at exit.
     temp: TempFolder,
+    /// Calendars, reminders, invitations, tasks and contacts (phase 6).
+    pim: Pim,
 }
 
 impl MailApp {
     pub fn new(ctx: &egui::Context) -> Self {
         let (settings, problem) = Settings::load();
         let wake_ctx = ctx.clone();
-        let mut engine = Engine::new(Settings::cache_dir(), Arc::new(move || wake_ctx.request_repaint()));
+        let zones: mailalm_engine::Zones = Arc::new(crate::zones::TzRules);
+        let mut engine = Engine::new(Settings::cache_dir(), Arc::new(move || wake_ctx.request_repaint()), zones);
         for a in &settings.accounts {
             engine.start(a.clone());
         }
@@ -150,6 +158,7 @@ impl MailApp {
             review: None,
             reviewed: HashSet::new(),
             temp: TempFolder::new(Settings::cache_dir().join("open")),
+            pim: Pim::new(),
         }
     }
 
@@ -235,6 +244,7 @@ impl MailApp {
 
     fn poll(&mut self) {
         for e in self.engine.poll() {
+            let Some(e) = self.pim.take(e) else { continue };
             match self.boxes.apply(e) {
                 Outcome::None => {}
                 Outcome::Message { key, parsed } => {
@@ -721,6 +731,7 @@ impl MailApp {
         }
         self.ws.remove_account(id);
         self.boxes.forget(id);
+        self.pim.forget(id);
         if self.selected.as_ref().is_some_and(|k| k.account == id) {
             self.selected = None;
             self.reading = None;
@@ -754,10 +765,15 @@ impl eframe::App for MailApp {
                 self.reading_pane(ui);
             }
             Page::Settings => self.settings_page(ui),
+            Page::Pim(p) => {
+                let cx = Ctx { ws: &self.ws, engine: &self.engine };
+                self.pim.page(ui, p, &cx);
+            }
         }
         self.create_menu(ui);
         self.dialogs(ui);
         self.compose_windows(ui);
+        self.pim_windows(ui);
         window::resize_edges(ui);
     }
 }
@@ -767,6 +783,16 @@ impl eframe::App for MailApp {
 impl MailApp {
     fn keys(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let (new_event, new_task) = ctx.input(|i| {
+            let both = i.modifiers.ctrl && i.modifiers.shift;
+            (both && i.key_pressed(Key::E), both && i.key_pressed(Key::K))
+        });
+        if new_event && !self.ws.accounts().is_empty() {
+            self.new_event(false);
+        }
+        if new_task && !self.ws.accounts().is_empty() {
+            self.new_task();
+        }
         if ctx.egui_wants_keyboard_input() || self.page != Page::Mail || self.form.is_some() || self.review.is_some() {
             return;
         }
@@ -794,7 +820,11 @@ impl MailApp {
                 .unwrap_or(0),
             _ => u32::try_from(self.list.unread).unwrap_or(u32::MAX),
         };
-        let title = if self.ws.accounts().is_empty() { "No account yet".to_owned() } else { format!("{} · {unread} unread", self.view_name()) };
+        let title = match self.page {
+            _ if self.ws.accounts().is_empty() => "No account yet".to_owned(),
+            Page::Pim(p) => p.title().to_owned(),
+            _ => format!("{} · {unread} unread", self.view_name()),
+        };
         egui::Panel::top("title-bar")
             .exact_size(34.0)
             .resizable(false)
@@ -865,6 +895,12 @@ impl MailApp {
             .frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(12, 8)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    // The calendar, contacts and tasks have their own commands.
+                    if let Page::Pim(p) = self.page {
+                        let cx = Ctx { ws: &self.ws, engine: &self.engine };
+                        self.pim.commands(ui, p, &cx);
+                        return;
+                    }
                     self.new_mail_button(ui);
                     separator(ui);
                     if flat(ui, "Reply").clicked() {
@@ -1051,6 +1087,7 @@ impl MailApp {
             self.ws.accounts().iter().map(|a| (a.id, a.name.clone(), a.address.clone(), t::account(a.color))).collect();
         let mut from: Option<AccountId> = None;
         let mut chosen: Option<String> = None;
+        let mut create: Option<&'static str> = None;
         let area = egui::Area::new(Id::unique("mailalm-create-menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(anchor + vec2(0.0, 4.0))
@@ -1086,20 +1123,23 @@ impl MailApp {
                         ui.add_space(4.0);
                         ui.separator();
                         ui.add_space(4.0);
-                        for (label, keys, phase) in [
-                            ("New event", "Ctrl+Shift+E", "6"),
-                            ("New meeting", "", "6"),
-                            ("New task", "Ctrl+Shift+K", "6"),
-                            ("New contact", "Ctrl+Shift+C", "8"),
-                        ] {
+                        for (label, keys) in [("New event", "Ctrl+Shift+E"), ("New meeting", ""), ("New task", "Ctrl+Shift+K"), ("New contact", "")] {
                             if menu_row(ui, None, label, "", keys, false).clicked() {
-                                chosen = Some(format!("{label}: arrives in phase {phase}."));
+                                create = Some(label);
                             }
                         }
                     });
             });
         let escape = ctx.input(|i| i.key_pressed(Key::Escape));
-        if let Some(id) = from {
+        if let Some(what) = create {
+            match what {
+                "New event" => self.new_event(false),
+                "New meeting" => self.new_event(true),
+                "New task" => self.new_task(),
+                _ => self.say("Contacts are read from Outlook and Google for now: add one there. Adding contacts in MailALM arrives in phase 8."),
+            }
+            self.create_menu = None;
+        } else if let Some(id) = from {
             self.new_mail_from(id);
             self.create_menu = None;
         } else if let Some(text) = chosen {
@@ -1206,15 +1246,23 @@ impl MailApp {
             .show(ui, |ui| {
                 egui::Panel::bottom("modules").resizable(false).frame(Frame::new().inner_margin(Margin::symmetric(0, 6))).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        for (label, active) in [("Mail", true), ("Calendar", false), ("Contacts", false), ("Tasks", false)] {
+                        let pages = [("Mail", Page::Mail), ("Calendar", Page::Pim(PimPage::Calendar)), ("Contacts", Page::Pim(PimPage::Contacts)), ("Tasks", Page::Pim(PimPage::Tasks))];
+                        for (label, page) in pages {
+                            let active = self.page == page || (page == Page::Mail && self.page == Page::Settings);
                             if ui.add(Button::selectable(active, label)).clicked() && !active {
-                                self.say(format!("{label} arrives in a later phase."));
+                                self.page = page;
+                                self.create_menu = None;
                             }
                         }
                     });
                 });
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
+                    if let Page::Pim(p) = self.page {
+                        let cx = Ctx { ws: &self.ws, engine: &self.engine };
+                        self.pim.sidebar(ui, p, &cx);
+                        return;
+                    }
                     if self.ws.accounts().is_empty() {
                         section(ui, "ACCOUNTS");
                         if ui.button("Add an account…").clicked() {
@@ -1484,6 +1532,8 @@ impl MailApp {
         // Review… clicked: which attachment, from whom, and the message's sender checks.
         let mut review_request: Option<(usize, AttachmentInfo, Person, mailalm_safety::Authentication)> = None;
         let mut action: Option<&'static str> = None;
+        // The agenda draws a message's invitation; it is taken out while the pane borrows the rest.
+        let mut pim = std::mem::take(&mut self.pim);
         egui::CentralPanel::default().frame(Frame::new().fill(t::PANEL).inner_margin(Margin::symmetric(24, 18))).show(ui, |ui| {
             let Some(r) = &self.reading else {
                 ui.centered_and_justified(|ui| {
@@ -1600,10 +1650,13 @@ impl MailApp {
                     ui.add_space(8.0);
                     ui.separator();
                 }
+                let cx = Ctx { ws: &self.ws, engine: &self.engine };
+                pim.invitation_panel(ui, &cx, &r.key, parsed);
                 ui.add_space(12.0);
                 ui.add(egui::Label::new(RichText::new(&parsed.text).size(14.0)).selectable(true).wrap());
             });
         });
+        self.pim = pim;
         match action {
             Some("Reply") => self.reply(false, false),
             Some("Reply all") => self.reply(true, false),
@@ -1853,15 +1906,20 @@ impl MailApp {
 
     fn compose_windows(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        if !self.composes.is_empty() || !self.pim.editors.is_empty() {
+            self.pim.refresh_book(&self.boxes);
+        }
         let accounts: HashMap<AccountId, (String, Provider)> = self.ws.accounts().iter().map(|a| (a.id, (a.name.clone(), a.provider))).collect();
         let mut done: Vec<usize> = Vec::new();
         let mut sends: Vec<(AccountId, Box<Outgoing>)> = Vec::new();
+        let book = &self.pim.book;
+        let suggest = |typed: &str| book.suggest(typed, 8);
         for (n, c) in self.composes.iter_mut().enumerate() {
             let (label, limit) = match accounts.get(&c.account) {
                 Some((name, provider)) => (name.clone(), SizeLimit::of(*provider)),
                 None => (String::new(), SizeLimit::Attachments(mailalm_engine::ATTACHMENTS_LIMIT)),
             };
-            match c.show(&ctx, &label, limit) {
+            match c.show(&ctx, &label, limit, &suggest) {
                 ComposeAction::None => {}
                 ComposeAction::Discard => done.push(n),
                 ComposeAction::Send(o) => {

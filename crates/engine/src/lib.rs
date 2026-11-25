@@ -7,6 +7,12 @@
 //! A worker shows the cache first, then syncs with the server. Changes (read, flag, move, delete)
 //! are made in the cache at once and kept in order until the server has them, so they also work
 //! offline (C7).
+//!
+//! Calendars, tasks and contacts (phase 6) go the same way ([`PimCommand`]): the Outlook and Gmail
+//! workers keep the provider's in the cache and sync them at start, every 15 minutes and on
+//! demand; an IMAP account has a calendar and a task list kept on this computer, and sends and
+//! answers invitations by mail (iMIP). What the interface works out from every account's cache
+//! (reminders, clashes, addresses to suggest) is in [`agenda`].
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,18 +21,58 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use mailalm_mime::{AttachmentData, Outgoing, OutgoingAttachment, Parsed};
+use mailalm_model::pim::ical::{Invitation, Method};
+use mailalm_model::pim::{Calendar, Contact, Event as CalendarEvent, Response, Task, TaskList, ZoneRules};
 use mailalm_model::{Account, AccountId, Change, Folder, Provider, Summary};
 use mailalm_safety::Report;
 
+pub mod agenda;
 mod gmail;
 mod ids;
+mod itip;
 mod local;
 mod outlook;
+mod pim_sync;
 pub mod secrets;
 mod signin;
 mod worker;
 
+pub use local::is_calendar_part;
 pub use signin::{OAuthAccount, google_available, google_sign_in, microsoft_available, microsoft_sign_in};
+
+/// The time zone rules the workers read and write times with (the app's zone database).
+pub type Zones = Arc<dyn ZoneRules + Send + Sync>;
+
+/// What the interface asks about an account's calendars, tasks and contacts (phase 6). Changes
+/// are made in the cache at once (the interface hears of them by [`Event::Calendars`] and
+/// [`Event::Tasks`]) and sent to the provider in order, now or once it can be reached.
+#[derive(Debug)]
+pub enum PimCommand {
+    /// Syncs the calendars, tasks and contacts now (also done at start and every 15 minutes).
+    Sync,
+    /// The calendar page shows `[from, to)` (UTC seconds): its events are read if the cache
+    /// doesn't keep them.
+    Range { from: i64, to: i64 },
+    /// Makes an event (one without a remote id) or changes one. `notify`: its guests hear of it
+    /// (the providers always tell them; an IMAP account sends the invitation by mail).
+    SaveEvent { event: Box<CalendarEvent>, notify: bool },
+    /// Deletes an event (or one occurrence); `notify`: its guests hear of it.
+    DeleteEvent { event: Box<CalendarEvent>, notify: bool },
+    /// Answers an invitation: `event` as the calendar has it, or as the invitation says (found
+    /// in the calendar by its UID). `send`: the organizer hears of it, with `comment`;
+    /// `proposal`: another time proposed (start, end).
+    Respond { event: Box<CalendarEvent>, answer: Response, send: bool, comment: String, proposal: Option<(i64, i64)> },
+    /// Takes in, after the user's confirmation, an update or a cancellation of a meeting, or a
+    /// guest's answer, received by mail (an IMAP account's calendar; the providers take them in
+    /// by themselves, and a cancellation removes the event there).
+    ApplyInvitation { method: Method, events: Vec<CalendarEvent> },
+    /// Makes a task (one without a remote id) or changes one (done or not, too).
+    SaveTask(Box<Task>),
+    DeleteTask(Box<Task>),
+    /// Decodes the calendar part (attachment `index`) of a message the reading pane shows: the
+    /// answer is [`Event::Invitation`]. Only that part is decoded, and read as an invitation.
+    Invitation { folder: String, uid: u32, index: usize },
+}
 
 /// What the interface asks of an account's worker.
 #[derive(Debug)]
@@ -52,6 +98,8 @@ pub enum Command {
     /// The account's blocked and allowed senders, kept on the server (Gmail filters). Other
     /// accounts answer with an error.
     Senders(SenderCommand),
+    /// Calendars, tasks, contacts, invitations.
+    Pim(PimCommand),
     Stop,
 }
 
@@ -124,6 +172,17 @@ pub enum Event {
     /// An attachment the user asked to review, with what MailALM found about it; or why it could
     /// not be read.
     Attachment { account: AccountId, folder: String, uid: u32, index: usize, result: Result<Box<Reviewed>, String> },
+    /// The account's calendars and their events, as the cache has them (after a sync or a change).
+    Calendars { account: AccountId, calendars: Vec<Calendar>, events: Vec<CalendarEvent> },
+    /// The account's task lists and their tasks, as the cache has them.
+    Tasks { account: AccountId, lists: Vec<TaskList>, tasks: Vec<Task> },
+    /// The account's contacts, as the cache has them.
+    Contacts { account: AccountId, contacts: Vec<Contact> },
+    /// The calendar part of a message, read as an invitation ([`PimCommand::Invitation`]); or why
+    /// it could not be read.
+    Invitation { account: AccountId, folder: String, uid: u32, index: usize, result: Result<Box<Invitation>, String> },
+    /// Something done that the user should hear of ("The answer was sent to Zoe").
+    Notice { account: AccountId, text: String },
 }
 
 /// An attachment decoded for its review, and what MailALM found about it.
@@ -182,7 +241,12 @@ impl Event {
             | Event::SendFailed { account, .. }
             | Event::SearchResults { account, .. }
             | Event::SenderRules { account, .. }
-            | Event::Attachment { account, .. } => *account,
+            | Event::Attachment { account, .. }
+            | Event::Calendars { account, .. }
+            | Event::Tasks { account, .. }
+            | Event::Contacts { account, .. }
+            | Event::Invitation { account, .. }
+            | Event::Notice { account, .. } => *account,
         }
     }
 }
@@ -201,31 +265,40 @@ pub struct Engine {
     events_tx: Sender<Event>,
     events: Receiver<Event>,
     wake: Wake,
+    zones: Zones,
     workers: HashMap<AccountId, WorkerHandle>,
 }
 
+/// What a worker is started with besides its account.
+pub(crate) struct Start {
+    pub(crate) base: PathBuf,
+    pub(crate) commands: Receiver<Command>,
+    pub(crate) events: Sender<Event>,
+    pub(crate) wake: Wake,
+    pub(crate) zones: Zones,
+}
+
 impl Engine {
-    /// `base` is the cache's folder (one sub-folder per account).
-    pub fn new(base: PathBuf, wake: Wake) -> Self {
+    /// `base` is the cache's folder (one sub-folder per account); `zones`, the time zone rules
+    /// events are read and written with.
+    pub fn new(base: PathBuf, wake: Wake, zones: Zones) -> Self {
         let (events_tx, events) = mpsc::channel();
-        Self { base, events_tx, events, wake, workers: HashMap::new() }
+        Self { base, events_tx, events, wake, zones, workers: HashMap::new() }
     }
 
     /// Starts an account's worker: IMAP, Outlook (Microsoft Graph) or Gmail (its API).
     pub fn start(&mut self, account: Account) {
         self.stop(account.id);
         let (tx, rx) = mpsc::channel();
-        let events = self.events_tx.clone();
-        let wake = Arc::clone(&self.wake);
-        let base = self.base.clone();
+        let start = Start { base: self.base.clone(), commands: rx, events: self.events_tx.clone(), wake: Arc::clone(&self.wake), zones: Arc::clone(&self.zones) };
         let id = account.id;
         let provider = account.provider;
         let thread = std::thread::Builder::new()
             .name(format!("mailalm-account-{}", id.0))
             .spawn(move || match provider {
-                Provider::Outlook => outlook::run(account, base, rx, events, wake),
-                Provider::Gmail => gmail::run(account, base, rx, events, wake),
-                _ => worker::run(account, base, rx, events, wake),
+                Provider::Outlook => outlook::run(account, start),
+                Provider::Gmail => gmail::run(account, start),
+                _ => worker::run(account, start),
             })
             .ok();
         if thread.is_none() {

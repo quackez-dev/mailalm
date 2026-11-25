@@ -2,20 +2,30 @@
 //!
 //! IMAP, Outlook (Graph) and Gmail accounts: reading, sending, folders, the local cache, search in
 //! the cache, changes made offline, and attachments (reviewed one by one before anything is done
-//! with them; attached to messages sent).
+//! with them; attached to messages sent). The calendars, reminders, invitations, tasks and
+//! contacts of every account (phase 6).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod accounts;
+mod agenda;
 mod attachments;
+mod autocomplete;
+mod calendar;
 mod compose;
+mod contacts;
+mod event_window;
 mod icons;
+mod invitation;
 mod mailbox;
 mod preview;
+mod reminders;
 mod settings;
+mod tasks;
 mod theme;
 mod time;
 mod ui;
 mod window;
+mod zones;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

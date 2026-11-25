@@ -8,6 +8,7 @@ use egui::{Atom, Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2, vec2};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
     ChevronDown,
+    ChevronLeft,
     ChevronRight,
     Check,
     Minimize,
@@ -30,6 +31,10 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::ChevronDown => {
             line(c + vec2(-4.0, -2.0), c + vec2(0.0, 2.0));
             line(c + vec2(0.0, 2.0), c + vec2(4.0, -2.0));
+        }
+        Icon::ChevronLeft => {
+            line(c + vec2(2.0, -4.0), c + vec2(-2.0, 0.0));
+            line(c + vec2(-2.0, 0.0), c + vec2(2.0, 4.0));
         }
         Icon::ChevronRight => {
             line(c + vec2(-2.0, -4.0), c + vec2(2.0, 0.0));

@@ -3,7 +3,7 @@
 A mail and calendar client for Windows, written in Rust with egui: Outlook.com/Hotmail, Gmail and
 classic IMAP accounts side by side, each kept clearly apart.
 
-**Status: phase 5.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
+**Status: phase 6.** IMAP accounts (Vidéotron, Bell and others), Hotmail/Outlook.com accounts
 (Microsoft Graph) and Gmail accounts (Gmail API), the last two signed in on the provider's page in
 the browser: reading, sending in plain text, folders and labels, moving, flags, a local cache,
 search in the cache, and changes made while offline. Outlook accounts report junk to Outlook.com;
@@ -18,6 +18,17 @@ files and Office documents without macros only, open a marked copy with Windows 
 confirmation. Messages are sent with attachments (Attach… or dropped on the window), with a
 warning when the text mentions one that is missing; an Outlook account sends at most 3 MB for
 now (no upload session yet).
+
+**Phase 6** adds the calendar, reminders, invitations, tasks and contacts, offline too (changes
+wait for the network). Outlook accounts use Microsoft Graph (calendars, Microsoft To Do,
+contacts; a Teams meeting when Microsoft offers one), Gmail accounts Google Calendar (with Meet
+links), Google Tasks and Google contacts (read only); an IMAP account has a calendar and a task
+list kept on this computer, and sends and answers invitations by mail. The calendar shows every
+account's calendars in their colours (day, work week, week, month, list), each can be hidden, and
+the time taken in all of them can be drawn over the days; events are planned in their own window,
+which shows what they clash with. An invitation received shows in the message, with its clashes;
+it enters the calendar only when answered. Reminders ring in their own window (snooze, dismiss).
+The recipient fields offer the contacts of every account and the people seen in mail.
 
 ## Principles
 
@@ -40,9 +51,10 @@ crates/model/     accounts, servers, folders, summaries, search queries, workspa
 crates/mime/      reading messages and writing outgoing mail (mail-parser, mail-builder, html2text)
 crates/net/       IMAP, TLS, SMTP, Microsoft and Google sign-in, Graph, Gmail, Google Calendar, Tasks
                   and People, partly adapted from MailCraft (see ATTRIBUTION.md)
-crates/store/     the local cache, one folder per account
+crates/store/     the local cache, one folder per account (mail, and calendars, tasks, contacts)
 crates/safety/    attachments: real type from the content, warnings, what may be done, SPF/DKIM/DMARC, Mark-of-the-Web (pure, tested)
-crates/engine/    one worker thread per account (IMAP, Outlook or Gmail): cache first, then the server; offline changes
+crates/engine/    one worker thread per account (IMAP, Outlook or Gmail): cache first, then the server; offline changes;
+                  calendars, tasks and contacts synced, invitations by mail for IMAP; reminders and clashes (agenda)
 docs/             the domains MailALM contacts; registering MailALM with Microsoft
 ```
 

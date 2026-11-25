@@ -129,6 +129,9 @@ impl Mailboxes {
                 Outcome::None
             }
             Event::Attachment { folder, uid, index, result, .. } => Outcome::Attachment { key: MessageKey { account, folder, uid }, index, result },
+            Event::Notice { text, .. } => Outcome::Notice(text),
+            // Calendars, tasks, contacts and invitations are the agenda's (`agenda::Pim::take`).
+            Event::Calendars { .. } | Event::Tasks { .. } | Event::Contacts { .. } | Event::Invitation { .. } => Outcome::None,
         }
     }
 }

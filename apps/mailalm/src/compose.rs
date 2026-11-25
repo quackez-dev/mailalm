@@ -11,6 +11,7 @@ use mailalm_mime::{Outgoing, OutgoingAttachment, format_person, mentions_attachm
 use mailalm_model::{AccountId, Person};
 
 use crate::attachments::size_text;
+use crate::autocomplete;
 use crate::icons::{self, Icon};
 use crate::theme as t;
 
@@ -92,6 +93,7 @@ impl Compose {
             in_reply_to: self.in_reply_to.clone(),
             references: self.references.clone(),
             attachments: self.attachments.clone(),
+            calendar: None,
         })
     }
 
@@ -150,8 +152,8 @@ impl Compose {
     }
 
     /// Shows the window. `account_label` names the account the message goes out from; `limit`
-    /// is what its provider takes.
-    pub fn show(&mut self, ctx: &egui::Context, account_label: &str, limit: SizeLimit) -> ComposeAction {
+    /// is what its provider takes; `suggest` offers addresses in the recipient fields (K1).
+    pub fn show(&mut self, ctx: &egui::Context, account_label: &str, limit: SizeLimit, suggest: &dyn Fn(&str) -> Vec<Person>) -> ComposeAction {
         let title = if self.subject.trim().is_empty() { "New message".to_owned() } else { self.subject.trim().to_owned() };
         let builder = ViewportBuilder::default()
             .with_title(format!("{title} · MailALM"))
@@ -243,7 +245,8 @@ impl Compose {
                     ui.end_row();
                     ui.label(RichText::new("To").color(t::MUTED));
                     ui.horizontal(|ui| {
-                        let to = ui.add(TextEdit::singleline(&mut self.to).desired_width(ui.available_width() - 70.0).hint_text("name@example.com, …"));
+                        let width = ui.available_width() - 70.0;
+                        let to = autocomplete::field(ui, egui::Id::unique(("mailalm-compose-to", self.id)), &mut self.to, width, "name@example.com, …", suggest);
                         if !self.focus_set && self.to.is_empty() {
                             to.request_focus();
                             self.focus_set = true;
@@ -255,10 +258,12 @@ impl Compose {
                     ui.end_row();
                     if self.show_cc {
                         ui.label(RichText::new("Cc").color(t::MUTED));
-                        ui.add(TextEdit::singleline(&mut self.cc).desired_width(f32::INFINITY));
+                        let width = ui.available_width();
+                        autocomplete::field(ui, egui::Id::unique(("mailalm-compose-cc", self.id)), &mut self.cc, width, "", suggest);
                         ui.end_row();
                         ui.label(RichText::new("Bcc").color(t::MUTED));
-                        ui.add(TextEdit::singleline(&mut self.bcc).desired_width(f32::INFINITY));
+                        let width = ui.available_width();
+                        autocomplete::field(ui, egui::Id::unique(("mailalm-compose-bcc", self.id)), &mut self.bcc, width, "", suggest);
                         ui.end_row();
                     }
                     ui.label(RichText::new("Subject").color(t::MUTED));
