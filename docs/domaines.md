@@ -52,6 +52,19 @@ mise à jour automatique, pas de rapport de plantage, pas d'autoconfiguration pa
 - L'API Gmail ne donne aucun lien à suivre (la pagination passe par des jetons) : MailALM ne contacte que les
   adresses ci-dessus.
 
+## Phase 7 : Antidote
+
+| Adresse | Port | Protocole | Quand |
+|---|---|---|---|
+| `127.0.0.1`, sinon `::1` (ce PC) | celui que donne `AgentConnectixConsole --api` | WebSocket en clair, local | L'utilisateur ouvre le correcteur, les dictionnaires ou les guides d'Antidote, ou l'Anti-Oups! avant l'envoi |
+
+- Antidote est un **programme local** : MailALM lit son dossier dans le registre
+  (`HKLM\SOFTWARE\Druide informatique inc.\Connectix`, valeur `DossierConnectix`), lance
+  `AgentConnectixConsole.exe --api` (sans fenêtre ni interpréteur de commandes) pour connaître le port, puis se
+  connecte à ce port **sur ce PC seulement**. Le code ne peut pas viser un autre hôte.
+- Le texte envoyé (zones à corriger, objet, corps et destinataires pour l'Anti-Oups!) va à l'Antidote installé sur
+  le PC. **Aucun texte ne sort du PC** par MailALM ; ce qu'Antidote fait ensuite relève d'Antidote.
+
 ## Phases suivantes
 
 L'agenda, les tâches et les contacts (phase 6) ajouteront les API Google Agenda, Tasks et People, et l'agenda de

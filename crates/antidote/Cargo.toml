@@ -1,0 +1,24 @@
+[package]
+name = "mailalm-antidote"
+description = "MailALM's bridge to Antidote (Druide): finds the local AgentConnectix, talks to it over a WebSocket on the loopback only, and lets Antidote's corrector, dictionaries and guides work on the compose text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Antidote's messages are JSON.
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+# SHA-1 for the WebSocket handshake, random keys and masks (already built for rustls).
+ring = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# Antidote's folder: HKLM\SOFTWARE\Druide informatique inc.\Connectix, value DossierConnectix.
+windows-registry = { workspace = true }
