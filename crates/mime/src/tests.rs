@@ -219,7 +219,8 @@ fn a_meeting_message_carries_its_calendar_part() {
     let (raw, _) = build(&out).expect("built");
     let text = String::from_utf8_lossy(&raw).to_ascii_lowercase();
     assert!(text.contains("multipart/alternative"), "{text}");
-    assert!(text.contains("text/calendar") && text.contains("method=request"), "{text}");
+    // mail-builder quotes parameter values (`method="request"`), which RFC 2045 allows.
+    assert!(text.contains("text/calendar") && (text.contains("method=request") || text.contains("method=\"request\"")), "{text}");
     let back = parse(&raw).expect("parses back");
     assert!(back.text.contains("You are invited."));
     assert_eq!(back.attachments.len(), 1, "the calendar is listed as a part");
