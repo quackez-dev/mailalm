@@ -10,6 +10,9 @@ use mailalm_net::gmail::GmailClient;
 use mailalm_net::graph::GraphClient;
 use mailalm_net::oauth;
 
+/// The Google permissions without which a Gmail account can't work.
+const GMAIL_NEEDED: [&str; 2] = ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.settings.basic"];
+
 /// How long the browser sign-in may take.
 const SIGN_IN_WAIT: Duration = Duration::from_secs(5 * 60);
 
@@ -61,7 +64,9 @@ pub fn microsoft_sign_in(login_hint: &str, open: &mut dyn FnMut(&str) -> Result<
 pub fn google_sign_in(login_hint: &str, open: &mut dyn FnMut(&str) -> Result<(), String>) -> Result<OAuthAccount, String> {
     let provider = oauth::google().ok_or("This copy of MailALM was built without Google sign-in.")?;
     let tokens = oauth::authorize(&provider, login_hint, open, SIGN_IN_WAIT).map_err(|e| describe("Google", &e))?;
-    if !oauth::GOOGLE_SCOPE.split_whitespace().all(|s| tokens.granted(s)) {
+    // Mail and filters are needed; the calendar, tasks and contacts may be left unticked (those
+    // pages then say so).
+    if !GMAIL_NEEDED.iter().all(|s| tokens.granted(s)) {
         return Err("Google gave MailALM only part of the permissions it needs (reading and changing mail, filters). Sign in again and tick every box on Google's page.".to_owned());
     }
     let refresh_token = tokens.refresh.clone().ok_or("Google did not allow MailALM to stay signed in (no refresh token).")?;
