@@ -57,7 +57,17 @@ Accepte les conditions, puis **Créer**.
 Ensuite, dans **Branding** (*Image de marque*) :
 
 - **n'ajoute pas de logo** : un logo oblige Google à vérifier l'application ;
-- laisse vides la page d'accueil, la politique de confidentialité, les conditions et les domaines autorisés.
+- remplis la page d'accueil et la politique de confidentialité, sans lesquelles **Publier l'application** reste
+  grisé (« you must complete your configuration on the Branding page ») :
+
+  | Champ | Valeur |
+  |---|---|
+  | Application home page | `https://github.com/quackez-dev/mailalm` |
+  | Application privacy policy link | `https://github.com/quackez-dev/mailalm/blob/main/PRIVACY.md` |
+  | Application terms of service link | vide |
+  | Authorized domains | `github.com` |
+
+- **Enregistre** (*Save*) en bas de la page.
 
 ## 4. Déclarer les permissions
 
