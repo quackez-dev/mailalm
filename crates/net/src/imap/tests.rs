@@ -536,7 +536,7 @@ fn a_draft_is_found_by_its_message_id() {
     let mut c = Client::from_stream(Script::new(b"* OK hi\r\n* SEARCH 41\r\nM1 OK done\r\nM2 OK done\r\n")).unwrap();
     assert_eq!(c.search_message_id("<abc.123@videotron.ca>").unwrap(), vec![41]);
     assert_eq!(c.search_message_id("abc.124@videotron.ca").unwrap(), Vec::<u32>::new());
-    for bad in ["", "<>", "a b@x", "a\"@x", "a\r\nM9 LOGOUT", "é@x", "a\b@x"] {
+    for bad in ["", "<>", "a b@x", "a\"@x", "a\r\nM9 LOGOUT", "é@x", "a\\b@x"] {
         assert!(matches!(c.search_message_id(bad), Err(NetError::Invalid(_))), "{bad:?}");
     }
     assert_eq!(

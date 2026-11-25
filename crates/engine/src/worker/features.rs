@@ -41,7 +41,7 @@ impl MailWorker for Worker {
     fn store_draft(&mut self, raw: &[u8], message_id: &str, replace: Option<&str>) -> Result<String, String> {
         let drafts = self.folder_with_role(FolderRole::Drafts).ok_or("this account has no Drafts folder on its server")?;
         let appended = match self.connect() {
-            Some(s) => s.append(&drafts.wire, &["\Draft", "\Seen"], raw),
+            Some(s) => s.append(&drafts.wire, &["\\Draft", "\\Seen"], raw),
             None => return Err("offline".to_owned()),
         };
         if let Err(e) = appended {
