@@ -107,7 +107,7 @@ impl<S: Read + Write> Client<S> {
     /// before anything is sent.
     pub(super) fn search_message_id(&mut self, message_id: &str) -> Result<Vec<u32>> {
         let id = message_id.trim().trim_start_matches('<').trim_end_matches('>');
-        if id.is_empty() || id.len() > 900 || !id.chars().all(|c| c.is_ascii_graphic() && !matches!(c, '"' | '\' | '<' | '>')) {
+        if id.is_empty() || id.len() > 900 || !id.chars().all(|c| c.is_ascii_graphic() && !matches!(c, '"' | '\\' | '<' | '>')) {
             return Err(NetError::Invalid("not a Message-ID".into()));
         }
         let cmd = format!("UID SEARCH HEADER Message-ID \"<{id}>\"");
