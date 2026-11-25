@@ -14,6 +14,9 @@ pub struct Settings {
     /// new account's).
     #[serde(default)]
     pub next_id: u32,
+    /// Searches kept as search folders (PLAN.md, section 6).
+    #[serde(default)]
+    pub saved_searches: Vec<mailalm_model::SavedSearch>,
 }
 
 impl Settings {
@@ -49,7 +52,7 @@ impl Settings {
                 let mut aside = path.clone().into_os_string();
                 aside.push(".damaged");
                 let _ = std::fs::rename(&path, PathBuf::from(aside));
-                (Self { accounts: Vec::new(), next_id: 1 }, Some(format!("The settings file was damaged and was set aside: {e}")))
+                (Self { accounts: Vec::new(), next_id: 1, saved_searches: Vec::new() }, Some(format!("The settings file was damaged and was set aside: {e}")))
             }
         }
     }

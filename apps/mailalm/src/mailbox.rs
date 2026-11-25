@@ -132,6 +132,8 @@ impl Mailboxes {
             Event::Notice { text, .. } => Outcome::Notice(text),
             // Calendars, tasks, contacts and invitations are the agenda's (`agenda::Pim::take`).
             Event::Calendars { .. } | Event::Tasks { .. } | Event::Contacts { .. } | Event::Invitation { .. } => Outcome::None,
+            // Rules, snoozed messages, follow-ups and server results: their pages come next.
+            Event::Rules { .. } | Event::RulePreview { .. } | Event::Later { .. } | Event::FollowUpDue { .. } | Event::ServerResults { .. } => Outcome::None,
         }
     }
 }
