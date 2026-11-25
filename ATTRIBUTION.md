@@ -68,3 +68,29 @@ naming its origin.
 | `crates/antidote/src/protocol.rs` | `messages.py`, `requete_sortante.py`, `requete_entrante.py`, `params.py`, `reponses.py`, `configuration_texteur.py`, `zone_de_texte.py`, `info_style.py`, `style_texte.py`, `type_document.py`, `type_identifiant_cache.py`, the dispatch of `agent_connectix.py` | MIT |
 | `crates/antidote/src/session.rs` | `agent_connectix.py`, `agent_texteur.py` | MIT |
 | `crates/antidote/src/locate.rs` | `recupere_port_websocket.py`, `windows.py` | MIT |
+
+## WordCraft
+
+MailALM's MCP channel (`crates/control`) and its MCP server (`apps/mailalm-mcp`) include code adapted from
+**WordCraft** (<https://github.com/storytold/wordcraft>), at commit `ca7f262a597c75da4a157b730c68aa2db8d12734`,
+dual-licensed under the MIT licence or the Apache License 2.0, at your option (the same terms as MailALM).
+
+WordCraft's copyright notice (from its `LICENSE-MIT`):
+
+> Copyright (c) 2026 ArtCraft Team and the WordCraft contributors
+
+Each adapted file starts with a comment naming its origin and what changed. The copy was read and audited
+before use: `audits/mailalm/reprise-mcp.md` in CraftTools.
+
+| MailALM file | WordCraft origin (commit `ca7f262a`) | Licence |
+|---|---|---|
+| `crates/control/src/key.rs` | `crates/control-key/src/lib.rs`; `random_key`, `write_key_file` and `keys_match` from `apps/wordcraft/src/control_server.rs` | MIT OR Apache-2.0 |
+| `crates/control/src/wire.rs` | `read_bounded_line` from `crates/mcp/src/server.rs`; `discard_rest_of_line` from `apps/wordcraft/src/control_server.rs` | MIT OR Apache-2.0 |
+| `crates/control/src/server.rs` | `apps/wordcraft/src/control_server.rs`; `ControlRequest` and its waiter from `crates/ui-egui/src/control.rs` | MIT OR Apache-2.0 |
+| `crates/control/src/server/tests.rs` | some tests of `apps/wordcraft/src/control_server.rs` | MIT OR Apache-2.0 |
+| `crates/control/src/client.rs` | `Remote` from `crates/mcp/src/backend.rs` | MIT OR Apache-2.0 |
+| `apps/mailalm-mcp/src/rpc.rs` | `crates/mcp/src/server.rs` | MIT OR Apache-2.0 |
+| `apps/mailalm-mcp/src/tools.rs` | `ToolResult` and the tool entry from `crates/mcp/src/tools.rs` | MIT OR Apache-2.0 |
+
+The tool catalog, the arguments and answers, the app-side adapter, the journal and the tests of `apps/mailalm-mcp`
+are MailALM's own.

@@ -93,7 +93,7 @@ jobs:
         run: |
           if [ -z "$MAILALM_MICROSOFT_CLIENT_ID" ]; then echo "::warning::MAILALM_MICROSOFT_CLIENT_ID is not set: this build cannot sign in to Microsoft"; fi
           if [ -z "$MAILALM_GOOGLE_CLIENT_ID" ] || [ -z "$MAILALM_GOOGLE_CLIENT_SECRET" ]; then echo "::warning::the Google client id or secret is not set: this build cannot sign in to Google"; fi
-          cargo build --release --locked --offline -p mailalm --target x86_64-pc-windows-msvc
+          cargo build --release --locked --offline -p mailalm -p mailalm-mcp --target x86_64-pc-windows-msvc
 
       - name: Package (portable zip, unsigned)
         if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
@@ -102,6 +102,7 @@ jobs:
           $name = "mailalm-$($env:GITHUB_REF_NAME -replace '[^A-Za-z0-9._-]', '-')-$($env:GITHUB_SHA.Substring(0, 8))-windows-x64"
           New-Item -ItemType Directory -Force dist, "stage\$name" | Out-Null
           Copy-Item target\x86_64-pc-windows-msvc\release\mailalm.exe "stage\$name\"
+          Copy-Item target\x86_64-pc-windows-msvc\release\mailalm-mcp.exe "stage\$name\"
           Compress-Archive -Path "stage\$name" -DestinationPath "dist\$name.zip"
 
       - name: Checksums
